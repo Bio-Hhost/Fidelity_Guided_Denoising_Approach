@@ -649,7 +649,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.sequence_length % 2 == 0:
-        parser.error("--sequence_length must be an odd number (e.g., 3, 5, 7).")
+        parser.error("--sequence_length must be an odd number (e.g.,1 3, 5).")
     if args.train_ratio + args.val_ratio >= 1.0:
         parser.error("--train_ratio and --val_ratio must sum to less than 1.0.")
 
