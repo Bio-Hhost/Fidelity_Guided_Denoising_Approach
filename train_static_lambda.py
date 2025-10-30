@@ -31,7 +31,8 @@ class CentralFrameExtractionLayer(Layer):
         return config
 
 class VideoDataGenerator(tf.keras.utils.Sequence):
-    def __init__(self, frames, batch_size=4, sequence_length=5, mask_ratio=0.10, background_level=0):
+    def __init__(self, frames, batch_size=4, sequence_length=5, mask_ratio=0.10, background_level=0, **kwargs):
+        super().__init__(**kwargs)
         self.frames = np.array(frames).astype(np.float32)
         self.frames = self.frames - background_level
 
