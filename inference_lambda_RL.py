@@ -177,7 +177,10 @@ def evaluate_video(input_tiff_path, training_run_folder, output_path):
     denoised_video += background_level
     denoised_video = np.clip(denoised_video, 0, 65535).astype(np.uint16)
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    
     tifffile.imwrite(output_path, denoised_video, imagej=True)
     print(f"\n✅ Denoised video successfully saved to: {output_path}")
 
