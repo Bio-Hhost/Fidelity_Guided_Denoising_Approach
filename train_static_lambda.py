@@ -511,7 +511,7 @@ def main(args):
         validation_data=val_generator,
         epochs=args.epochs,
         callbacks=callbacks_list,
-        workers=max(1, os.cpu_count() // 2) 
+        #workers=max(1, os.cpu_count() // 2) 
     )
 
     np.save(args.output_history, history.history)
