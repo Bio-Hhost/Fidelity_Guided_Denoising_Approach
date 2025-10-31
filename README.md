@@ -24,12 +24,12 @@ Our denoising framework is built on three core components: a 3D U-Net architectu
 ### 1. 3D U-Net Architecture
 We use an adapted 3D U-Net to process spatiotemporal volumes of microscopy data (e.g., 256x256xT, where T is the number of frames). This allows the network to leverage both spatial and temporal context to reconstruct the central frame of the sequence.
 
-(figures/unet_architecture.png)
+![UNet Architecture](figures/unet_architecture.pdf)
 
 ### 2. Self-Supervised, Blind-Spot Training
 Training is self-supervised, requiring no clean "ground truth" images. We adapt the blind-spot strategy by masking random pixels in the central frame of an input sequence. The network is then trained to predict the values of these masked pixels using only the surrounding spatial and temporal context.
 
-(figures/training_process_diagram.png)
+![Training Process Diagram](figures/training_process_diagram.pdf)
 
 ### 3. Composite Physics-Informed Loss
 The core of our method is a composite loss function that balances denoising and data fidelity. It is "physics-informed" because it incorporates the Poisson-Gaussian noise statistics of the EMCCD camera:
