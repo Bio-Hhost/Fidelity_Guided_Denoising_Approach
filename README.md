@@ -101,24 +101,30 @@ python inference_lambda_RL.py \
 ---
 
 ## Training (Static-λ)
+This mode is for the “normal” case: you pick a single fidelity weight `λ`, train the 3D U-Net once, and get a model you can run on all similar datasets.
 
-**Script:** `train_static_lamda.py`
+### What the script does
+`train_static_lamda.py` will:
 
-**Key ideas**
-- Loads **one or more** multi-page TIFF stacks and concatenates frames.
-- **Estimates noise parameters** if not provided:
-  - Background level (median of user-defined noise regions)
-  - Readout variance (MAD-based)
-  - Gain α (slope of variance–mean relationship across patches)
-- Builds a 3D U-Net with blind-spot masking on the central frame.
-- Loss: **Poisson–Gaussian NLL on masked pixels + λ·MSE on unmasked pixels**.
+1. load one or more multi-page TIFF files,
+2. estimate the camera noise parameters from background regions (unless you provide them),
+3. build the 3D U-Net with blind-spot masking on the central frame,
+4. train it with the composite loss  
+5. save the model, the training history, and the estimated noise parameters.
+
+After one run you already have everything you need for inference.
+
+### When to use it
+- You have one stable acquisition setup (same TIRF/camera settings).
+- You want to reproduce the paper without the RL part.
+- You want to try a few λ values (e.g. `0`, `0.001`, `0.1`) and pick the best-looking one.
 
 **Most useful flags**
 - `--input_files`: one or more training TIFFs (same pixel size)
 - `--sequence_length`: odd (e.g., 1, 3, 5)  
 - `--lambda_geo`: the fidelity weight `λ`
 - `--background_level`, `--gaussian_variance`, `--gain_estimate`:
-  provide **all three** to **skip** auto-estimation
+  provide all three to skip auto-estimation
 - `--plot_noise`: saves quick-look plots for noise & gain estimation
 - `--train_ratio/--val_ratio`: sequential split across frames
 
@@ -127,34 +133,44 @@ python inference_lambda_RL.py \
 - `--output_history` `.npy` with training history  
 - `--output_noise_params` `.npy` dict with `{background_level, gaussian_variance, gain_estimate}`
 
+**Minimum example**
+```bash
+python train_static_lamda.py   --input_files data/highSNR_train_01.tif   --sequence_length 3   --lambda_geo 0.1   --output_model outputs/static_lambda/model.keras   --output_noise_params outputs/static_lambda/noise_params.npy
+```
+
 **Example (manual noise params)**
 ```bash
 python train_static_lamda.py   --input_files data/highSNR_train_01.tif   --sequence_length 3   --lambda_geo 0.001   --background_level 198.0   --gaussian_variance 388.0   --gain_estimate 18.0   --output_model outputs/static_lambda/model.keras   --output_noise_params outputs/static_lambda/noise_parameters.npy
 ```
 
+You can now call `inference_static_lambda.py` with these files.
+
 ---
 
 ## Training (RL-controlled λ)
 
-**Script:** `train_lambda_RL.py`
+This mode is the “adaptive” variant: instead of fixing `λ` before training, a DDPG agent learns to choose it per batch based on how difficult that batch is (spot density, SNR, brightness, etc.).
 
-**What’s different**
-- A DDPG agent picks `λ` in **[min, max]** per-batch (default `[0.01, 0.5]`).
-- Rewards capture denoising gains and fidelity w.r.t. spot features (by default: **SNR-based reward** around TrackMate spots).
-- Warm-up phase with random actions fills the replay buffer; then joint training starts.
+### What the script does
+`train_lambda_RL.py` ties together:
 
-**Inputs**
-- `--tiff_path`: single training TIFF stack
-- `--spots_csv_path`: TrackMate spot CSV for that movie
-- `--sequence_length`: odd
-- **Image size must match** your TIFF (`--img_height`, `--img_width`)
-- `--base_output_path`: a folder where the run will be created:  
-  `runs/training_run_YYYYMMDD-HHMMSS/`
-  - Saves: `config.json`, `models/unet_final.keras` (and `*_best*.h5` weights), `training_history.csv`, and debug PNGs.
+1. your training TIFF movie,
+2. your TrackMate spot CSV,
+3. a 3D U-Net,
+4. a DDPG agent that proposes a `λ` inside a safe range (e.g. 0.01–0.5).
 
-**Reward & state**
-- Default reward (`calculate_snr_reward`) averages spot SNR improvements using small signal/background radii (configurable).
-- State vector per batch: `[mean(frame), std(frame), #spots, mean SNR, mean QUALITY]`.
+For each step:
+- the agent proposes a `λ`,
+- the U-Net trains on that batch with this `λ`,
+- the script measures how good the result is around real spots (SNR-based reward),
+- the agent updates so it can pick better `λ` next time.
+
+Over training, it learns a policy “which λ works best for which kind of batch.”
+
+### When to use it
+- Your datasets vary a lot (concentration, exposure, laser power).
+- You want to match the adaptive fidelity approach from the paper.
+- You already have (or can export) TrackMate detections.
 
 **Important flags (selection)**
 - `--lambda_geo_bounds 0.01 0.5`
@@ -163,10 +179,23 @@ python train_static_lamda.py   --input_files data/highSNR_train_01.tif   --seque
 - `--gamma`, `--tau`, `--actor_lr`, `--critic_lr`, `--unet_lr`
 - Learning-rate scheduler and early stopping are built-in.
 
+**Minimum example**
+```bash
+python train_lambda_RL.py   --tiff_path data/highSNR_train_01.tif   --spots_csv_path data/highSNR_train_01_trackmate.csv   --base_output_path runs   --sequence_length 5   --img_height 256 --img_width 256
+```
+
 **Example RL-λ training with custom bounds & warm-up**
 ```bash
 python train_lambda_RL.py   --tiff_path data/train_01.tif   --spots_csv_path data/train_01_trackmate.csv   --base_output_path runs   --sequence_length 5 --img_height 256 --img_width 256   --lambda_geo_bounds 0.01 0.5   --rl_warmup_epochs 5 --total_epochs 100 --steps_per_epoch 100
 ```
+
+This creates a timestamped folder in `runs/` (e.g. `runs/training_run_2025xxxx-xxxxxx/`) containing:
+- `config.json`
+- `models/` with the trained U-Net
+- `training_history.csv`
+- debug images
+
+Exactly this folder is what `inference_lambda_RL.py` expects.
 
 ---
 
