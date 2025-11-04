@@ -68,4 +68,53 @@ python plot_auc_summary.py \
 This will generate a single image file (AUC_Summary_vs_Noise_Scale.png in this example) showing the summary.
 
 > This script also uses the `get_method_style` function and `ALL_COLORS` dictionary, so you must customize it if you are plotting your own methods with different naming conventions.
+
 ---
+
+## Full Evaluation (at Optimal Thresholds)
+
+The `evaluate_detection_threshold_scan.py` script (Step 3) is excellent for finding the optimal detection threshold for each method.
+
+This script, `evaluate_detection_threshold_scan.py`, automates the entire in-depth analysis. It automatically combines the results from the threshold scan and then uses that information to perform the full, in-depth quantitative analysis described in **Section 2.4.1**.
+
+### Overview
+
+This script performs two major operations:
+
+1.  Auto-Combination: It first scans the directory (`Evaluation_Results/`) for all the `detection_metrics_all_variants.csv` files. It combines them into a single master file (`combined_threshold_scan_results.csv`) that knows the optimal threshold (max F1-Score) for every method at every noise scale.
+
+2.  In-Depth Analysis: It then re-loads the pristine GT video and all simulated/denoised videos. For each one, it:
+    * Runs the blob detector only at that method's optimal threshold.
+    * Performs 2D Gaussian fitting on all **True Positive** detections.
+    * Calculates the full suite of performance metrics:
+        * **Image Quality:** PSNR and SSIM.
+        * **Detection:** F1, Precision, and Recall.
+        * **Localization:** RMSE and Median Absolute Error (pixels).
+        * **Photometry:** R-squared, Gain, and Median Absolute Error (ADU).
+
+Then, it saves a master `evaluation_summary_all_methods.csv` file and generates summary plots for each of these key metrics vs. noise scale, giving you all the main figures for the paper.
+
+### Usage Example
+
+```bash
+python evaluate_comprehensive.py \
+    --gt_video "Cy3_Best/synthetic_gt_scaled_0.1.tif" \
+    --gt_spots_csv "Cy3_Best/synthetic_gt_scaled_0.1_spot_info.csv" \
+    --input_dir "Cy3_Best/Simulations_Output_Paper/Gauss_Poisson_Est_Paper" \
+    --output_dir "Cy3_Best/Comprehensive_Evaluation_Results" \
+    --threshold_scan_dir "Cy3_Best/Evaluation_Results" \
+    --sample_frames 500 \
+    --fit_region_size 7 \
+    --opt_metric "F1"
+```
+
+### Outputs
+This script generates the main quantitative results for your paper in the specified --output_dir:
+
+* combined_threshold_scan_results.csv: The intermediate, combined CSV.
+* evaluation_summary_all_methods.csv: The final, master CSV with all metrics (PSNR, F1, Loc_Error, etc.).
+* Summary_F1_vs_Scale.png: Plot of F1-Score vs. Noise.
+* Summary_PSNR_vs_Scale.png: Plot of PSNR vs. Noise.
+* Summary_Loc_MedianAE_vs_Scale.png: Plot of Localization Error vs. Noise.
+* Summary_Phot_MedianAE_vs_Scale.png: Plot of Photometry Error vs. Noise.
+* Summary_Phot_R_squared_vs_Scale.png: Plot of Photometry R² vs. Noise.
