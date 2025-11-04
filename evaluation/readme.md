@@ -1,3 +1,33 @@
+# Denoising Performance Evaluation Suite
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Evaluating Simulated Data](#evaluating-denoising-performance-on-simulated-data)
+  - [Detection Threshold Scan](#detection-threshold-scan)
+    - [Overview](#overview-1)
+    - [Usage Example](#usage-example)
+    - [Outputs](#outputs)
+  - [AUC Plot Creation](#auc-plot-creation)
+    - [Usage Example](#usage-example-1)
+    - [Outputs](#outputs-1)
+  - [Full Evaluation at Optimal Thresholds](#full-evaluation-at-optimal-thresholds)
+    - [Overview](#overview-2)
+    - [Usage Example](#usage-example-2)
+    - [Outputs](#outputs-2)
+- [Evaluating Experimental Data](#evaluation-on-experimental-data)
+  - [Overview](#overview-3)
+  - [Usage Example](#usage-example-3)
+  - [Outputs](#outputs-3)
+
+## Overview
+
+This repository provides a suite of scripts for evaluating denoising methods on both simulated and experimental microscopy data. The evaluation pipeline includes:
+
+- **For Simulated Data:** Detection threshold scanning, AUC analysis, and comprehensive performance metrics with ground truth comparison
+- **For Experimental Data:** Real-world performance analysis using TrackMate detections as reference
+
+---
 
 # Evaluating Denoising Performance On Simulated Data
 
@@ -118,3 +148,75 @@ This script generates the main quantitative results for your paper in the specif
 * Summary_Loc_MedianAE_vs_Scale.png: Plot of Localization Error vs. Noise.
 * Summary_Phot_MedianAE_vs_Scale.png: Plot of Photometry Error vs. Noise.
 * Summary_Phot_R_squared_vs_Scale.png: Plot of Photometry R² vs. Noise.
+
+---
+
+---
+
+# Evaluation on Experimental Data
+
+This repository also includes the script `evaluate_experimental.py` to reproduce the quantitative analysis on real-world experimental data described in **Section 2.4.2** of the paper.
+
+This script does not use a ground truth. Instead, it uses spot detections from the original noisy video (from TrackMate) as a reference to compare the quantitative properties of the noisy vs. denoised spots.
+
+### Overview
+
+This single, integrated script performs the entire experimental analysis and plotting pipeline.
+
+1.  **Finds Experiments:** It scans a base directory for experiment subfolders. Each subfolder is expected to contain:
+    * A noisy video (e.g., `Experiment_A.tif`)
+    * A TrackMate spots list (e.g., `Experiment_A.csv`)
+    * One or more denoised videos (e.g., `Experiment_A_n2v_denoised.tif`)
+2.  **Per-Spot Analysis:** For every spot in the TrackMate CSV, it performs a 2D Gaussian fit on both the noisy and the denoised video at the reference coordinate.
+3.  **Metric Calculation:** For each spot, it calculates the key metrics mentioned in the paper:
+    * **Local Background Noise:** The robust standard deviation of the local background, calculated in an adaptive annulus around the spot.
+    * **Local Background Brightness:** The median of the local background.
+    * **Localization Error:** The Euclidean distance (in pixels) between the denoised fitted center and the original TrackMate coordinate.
+    * **Photometry Error:** The absolute difference in fitted amplitude between the denoised spot and the original noisy spot.
+4.  **Saves Detailed Results:** It saves a `_detailed_results.csv` file for each denoised video, containing the per-spot metrics.
+5.  **Generates Summary Plots:** After processing all experiments, it automatically combines all results and generates the final summary bar plots, showing the median performance of each method for each metric across all experiments.
+
+### Usage Example
+
+Your data should be structured as follows:
+
+```
+/path/to/your/data/
+├── Experiment_A/
+│   ├── Experiment_A.tif
+│   ├── Experiment_A.csv
+│   ├── Experiment_A_n2v_denoised.tif
+│   └── Experiment_A_deepcad_denoised.tif
+├── Experiment_B/
+│   ├── Experiment_B.tif
+│   ├── Experiment_B.csv
+│   └── Experiment_B_n2v_denoised.tif
+...
+```
+
+Run the script by pointing it to the base directory:
+
+```bash
+python evaluate_experimental.py \
+    --base_dir "/path/to/your/data/" \
+    --output_dir_name "Experimental_Results" \
+    --methods "N2V" "DeepCAD-RT" "λ = RL" "λ = 0.1 (T=1)" \
+    --adaptive_radii \
+    --exclude_training_data \
+    --save_visuals
+```
+
+### Outputs
+
+This script will create a new folder (e.g., Experimental_Results) inside your --base_dir. This folder will contain:
+
+* Detailed CSVs: One ..._detailed_results.csv for each denoised video processed.
+* Summary Plots: The final, publication-ready bar plots:
+   * local_background_noise_reduction.png
+   * local_background_mean_preservation.png
+   * median_localization_error.png
+   * median_photometry_error.png
+* Visualizations (Optional): If --save_visuals is used, it will create a visualizations subfolder with debug images of the background annulus and Gaussian fits for a few spots.
+
+> Important Note for Customization: 
+> The script uses the METHOD_MAP dictionary at the top of evaluate_experimental.py to map filenames to display names (e.g., geo0.1 -> λ = 0.1 (T=1)). If you use this script to evaluate your own denoising methods with different file-naming conventions, you must edit this dictionary to recognize your files.
