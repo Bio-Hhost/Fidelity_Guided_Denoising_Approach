@@ -479,7 +479,6 @@ def main(args):
 
 
 def parse_args():
-    """Parses command-line arguments."""
     parser = argparse.ArgumentParser(description="Run detection performance evaluation on simulated data.")
     
     # --- I/O Arguments ---
