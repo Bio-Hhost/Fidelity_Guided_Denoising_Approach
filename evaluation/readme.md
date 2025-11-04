@@ -1,5 +1,5 @@
 
-# Evaluating Denoising Performance
+# Evaluating Denoising Performance On Simulated Data
 
 ## Detection Threshold Scan 
 
@@ -47,3 +47,25 @@ This script will create a new sub-directory in your output_dir for each noise le
 
 ## AUC PLOT CREATION
 
+After running the evaluation (`evaluate_detection_threshold_scan.py`) on all your noise levels, you will have many separate `Group_Scale_...` folders. The `plot_auc_summary.py` script provides a step to aggregate all these results into a single summary plot.
+
+This script recursively scans your evaluation output directory for all `detection_metrics_all_variants.csv` files. It reads each file, extracts the final Area Under the Curve (AUC) for every method, and plots this value against the noise scale.
+
+The result is a single line plot showing how the performance (AUC) of each denoising method changes as the noise level increases.
+
+### Usage Example
+
+Run this script on the top-level directory where your evaluation results are stored.
+
+```bash
+python plot_auc_summary.py \
+    --input_dir "Evaluation_Results" \
+    --output_plot "Evaluation_Results/AUC_Summary_vs_Noise_Scale.png"
+```
+
+### Outputs
+
+This will generate a single image file (AUC_Summary_vs_Noise_Scale.png in this example) showing the summary.
+
+> This script also uses the `get_method_style` function and `ALL_COLORS` dictionary, so you must customize it if you are plotting your own methods with different naming conventions.
+---
