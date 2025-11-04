@@ -5,7 +5,11 @@ This script implements the main quantitative analysis (Sec 2.4.1).
 It requires the output from the threshold scan ('evaluate_detection_threshold_scan.py').
 
 Workflow:
-1. Loads a combined CSV file containing all threshold scan results.
+1. Scans the '--threshold_scan_dir' for all 'detection_metrics_all_variants.csv'
+   files created by 'evaluate_detection_threshold_scan.py'.
+2. Combines them into a single master DataFrame, adding 'scale' metadata.
+3. Saves this combined CSV (e.g., 'combined_threshold_scan_results.csv')
+   to the '--output_dir'.
 2. For each method and noise scale, it identifies the *optimal threshold*
    (e.g., the one that maximized F1-Score).
 3. It re-loads the GT video and the simulated/denoised video (sampled).
@@ -171,6 +175,42 @@ def match_detections_to_gt(detections_df, gt_df, tolerance):
             
     return matches_df, fp_df
 
+def combine_results_to_master_df(base_dir, output_file):
+    print("\n--- Starting CSV Combination ---")
+    search_pattern = os.path.join(base_dir, '**', 'detection_metrics_all_variants.csv')
+    all_csv_paths = glob.glob(search_pattern, recursive=True)
+    
+    if not all_csv_paths:
+        print(f"Error: No 'detection_metrics_all_variants.csv' files found in '{base_dir}'.")
+        return None
+
+    print(f"Found {len(all_csv_paths)} CSV files to combine.")
+    
+    all_dfs = []
+    for path in all_csv_paths:
+        try:
+            df = pd.read_csv(path)
+            # Extract scale from the directory name, e.g., "Group_Scale_1.0"
+            scale_str = os.path.basename(os.path.dirname(path)).replace('Group_Scale_', '')
+            df['scale'] = float(scale_str)
+            all_dfs.append(df)
+        except Exception as e:
+            print(f"Warning: Could not process file '{path}'. Reason: {e}")
+            
+    if not all_dfs:
+        print("Error: Failed to read any CSV files successfully.")
+        return None
+
+    combined_df = pd.concat(all_dfs, ignore_index=True)    
+    style_info = combined_df['data_type'].apply(get_method_style)
+    combined_df['Method'] = style_info.apply(lambda x: x[0])
+    combined_df['Color'] = style_info.apply(lambda x: x[1])
+    
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    combined_df.to_csv(output_file, index=False)
+    print(f"\nSuccessfully combined all results into:\n{output_file}")
+    return combined_df
+
 def get_optimal_threshold(summary_df, scale_value, data_type_key, default_thresh, metric_col='F1'):
     try:
         subset = summary_df[(np.isclose(summary_df['scale'], scale_value)) & (summary_df['data_type'] == data_type_key)]
@@ -313,8 +353,6 @@ def create_summary_plots(all_results_df, output_dir):
         print(f"  Saved summary plot: {fig_path}")
 
 def main(args):
-    """Main function to run the comprehensive evaluation."""
-    
     overall_start_time = time.time()
     
     gt_video_path = Path(args.gt_video)
@@ -339,26 +377,26 @@ def main(args):
         'match_tolerance': args.tolerance,
         'fit_region_size': args.fit_region_size
     }
+
+    base_output_dir.mkdir(parents=True, exist_ok=True)
+    combined_csv_path = base_output_dir / "combined_threshold_scan_results.csv"
     
-    try:
-        print(f"Loading optimal thresholds from: {optimal_threshold_summary_path}")
-        if not optimal_threshold_summary_path.exists():
-            print(f"FATAL ERROR: The required threshold summary file does not exist:")
-            print(f"{optimal_threshold_summary_path}")
-            print("\nPlease run the script to combine threshold scan results first.")
-            exit()
-        optimal_thresholds_df = pd.read_csv(optimal_threshold_summary_path)
-        if 'scale' not in optimal_thresholds_df.columns:
-             if 'scale_numeric' in optimal_thresholds_df.columns:
-                 optimal_thresholds_df = optimal_thresholds_df.rename(columns={'scale_numeric': 'scale'})
-             else:
-                 raise ValueError("Threshold summary CSV missing 'scale' column.")
-        optimal_thresholds_df['scale'] = pd.to_numeric(optimal_thresholds_df['scale'])
+    print(f"--- Step 1: Combining threshold scan results ---")
+    print(f"Reading from: {threshold_scan_dir}")
+    
+    optimal_thresholds_df = combine_results_to_master_df(
+        threshold_scan_dir, 
+        combined_csv_path
+    )
+    
+    if optimal_thresholds_df is None:
+        print(f"FATAL ERROR: Failed to combine threshold scan CSVs from '{threshold_scan_dir}'. Cannot proceed.")
+        exit()
+        
+    print(f"Successfully combined threshold results into: {combined_csv_path}")
 
-    except Exception as e:
-        print(f"FATAL ERROR: Failed to load or parse optimal threshold summary file: {e}"); exit()
-
-    print(f"\nSearching for TIF files in: {input_data_dir}")
+   print(f"\n--- Step 2: Running Comprehensive Evaluation ---") 
+   print(f"\nSearching for TIF files in: {input_data_dir}")
     all_tif_files = [p for p in input_data_dir.glob("*.tif") if "softmasked" not in p.name]
     scale_pattern = re.compile(r"scale_(\d+\.\d+)|sim_(\d+\.\d+)")
     
@@ -454,8 +492,8 @@ def parse_args():
                         help="Path to the directory containing all noisy and denoised .tif files.")
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Path to the base directory where comprehensive results (CSVs, plots) will be saved.")
-    parser.add_argument("--threshold_summary_csv", type=str, required=True,
-                        help="Path to the COMBINED CSV file from the threshold scan (contains all thresholds for all methods/scales).")
+   parser.add_argument("--threshold_scan_dir", type=str, required=True,
+                           help="Path to the base directory containing the 'Group_Scale_...' folders from the 'evaluate_detection_threshold_scan.py' scan.")
 
     # --- Filtering ---
     parser.add_argument("--methods", type=str, nargs='+', default=None,
