@@ -173,7 +173,7 @@ class RLDataGenerator(tf.keras.utils.Sequence):
 
         for seq_start_index in batch_indices:
             sequence = self.frames[seq_start_index : seq_start_index + self.sequence_length]
-            X_seq = np.stack(sequence, axis=-1) # Shape: (H, W, Seq)
+            X_seq = np.transpose(sequence, (1, 2, 0))
             X_seq = np.expand_dims(X_seq, axis=-1) # Shape: (H, W, Seq, 1)
 
             center_frame_global_idx = seq_start_index + self.center_offset
@@ -204,102 +204,92 @@ class RLDataGenerator(tf.keras.utils.Sequence):
         if not self.is_validation:
             np.random.shuffle(self.indices)
 
-def calculate_self_supervised_reward_batch(X_center_batch_tf, y_pred_batch_tf, trackmate_spots_batch, config, noise_params):
-    batch_size = X_center_batch_tf.shape[0]
-    batch_per_sample_rewards = []
-    batch_reward_details_list = []
-    X_np = X_center_batch_tf.numpy().squeeze()
-    y_pred_np = y_pred_batch_tf.numpy().squeeze()
-    
-    for i in range(batch_size):
-        X_frame, y_pred_frame = X_np[i], y_pred_np[i]
-        tm_spots = trackmate_spots_batch[i]
-        frame_rewards_dict = {'bg_smoothness': 0.0, 'spot_sharpness': 0.0, 'intensity_consistency': 0.0, 'fit_success_rate': 0.0}
-
-        if config.rl_reward_config['weights'].get('bg_smoothness', 0) > 0:
-            bg_mask = create_background_mask_from_spots(X_frame.shape, tm_spots, config.rl_reward_config.get('spot_exclude_radius_px', 5), config)
-            if np.any(bg_mask):
-                var_X_bg = np.var(X_frame[bg_mask])
-                var_y_pred_bg = np.var(y_pred_frame[bg_mask])
-                frame_rewards_dict['bg_smoothness'] = var_X_bg - var_y_pred_bg
-
-        num_tm_spots = len(tm_spots) if tm_spots is not None else 0
-        sharpness_vals, intensity_vals, fit_success_count = [], [], 0
-        if num_tm_spots > 0:
-            for _, spot_row in tm_spots.iterrows():
-                tm_pos = (spot_row[config.csv_x_col], spot_row[config.csv_y_col])
-                patch_ypred, (gx1, gy1) = zoom_spot_loc(y_pred_frame, tm_pos, config.rl_reward_config['fit_region_size'])
-                fit_ok, params = fit_rotated_gaussian_2d(patch_ypred, gx1, gy1)
-                if fit_ok:
-                    fit_success_count += 1
-                    sharpness_vals.append(-(params['fit_sx'] + params['fit_sy']))
-                    patch_X, (gx1_X, gy1_X) = zoom_spot_loc(X_frame, tm_pos, config.rl_reward_config['fit_region_size'])
-                    fit_ok_X, params_X = fit_rotated_gaussian_2d(patch_X, gx1_X, gy1_X)
-                    if fit_ok_X:
-                        intensity_vals.append(-abs(params['fit_amplitude'] - params_X['fit_amplitude']))
-
-            if sharpness_vals: frame_rewards_dict['spot_sharpness'] = np.mean(sharpness_vals)
-            if intensity_vals: frame_rewards_dict['intensity_consistency'] = np.mean(intensity_vals)
-            frame_rewards_dict['fit_success_rate'] = fit_success_count / num_tm_spots if num_tm_spots > 0 else 0
-
-        total_reward = sum(weight * frame_rewards_dict.get(key, 0.0) for key, weight in config.rl_reward_config['weights'].items())
-        batch_per_sample_rewards.append(total_reward)
-        batch_reward_details_list.append(frame_rewards_dict)
-
-    return tf.convert_to_tensor(batch_per_sample_rewards, dtype=tf.float32), batch_reward_details_list
-
-def calculate_snr_reward(denoised_images_tf, trackmate_spots_list, config):
-    denoised_images_np = denoised_images_tf.numpy().squeeze()
+def calculate_composite_reward(X_center_batch_tf, y_pred_batch_tf, trackmate_spots_batch, config):
     batch_rewards = []
+    batch_reward_details = []
 
-    signal_radius = config.rl_reward_config.get('signal_radius', 2)
-    bg_inner_radius = config.rl_reward_config.get('bg_inner_radius', 3)
-    bg_outer_radius = config.rl_reward_config.get('bg_outer_radius', 5)
+    X_np = X_center_batch_tf.numpy()
+    y_pred_np = y_pred_batch_tf.numpy()
 
-    for i in range(denoised_images_np.shape[0]): 
-        image = denoised_images_np[i]
-        spots_df = trackmate_spots_list[i]
+    if X_np.ndim == 2: 
+         X_np = np.expand_dims(X_np, axis=0)
+    if y_pred_np.ndim == 3: 
+        y_pred_np = np.expand_dims(y_pred_np, axis=0)
+
+    y_pred_np = y_pred_np.squeeze(axis=-1)
+
+    reward_cfg = config.rl_reward_config
+    fp_filter_cfg = reward_cfg['fp_filter']
+    weights = reward_cfg['weights']
+
+    for i in range(X_np.shape[0]):
+        original_frame, denoised_frame = X_np[i], y_pred_np[i]
+        spots_df = trackmate_spots_batch[i]
+        frame_spot_rewards = []
+        reward_details = {'snr':[], 'intensity':[], 'localization':[], 'penalty':[]}
 
         if spots_df is None or spots_df.empty:
             batch_rewards.append(0.0)
+            batch_reward_details.append(reward_details)
             continue
 
-        spot_snrs = []
-        h, w = image.shape
-        y_coords, x_coords = np.ogrid[:h, :w]
-
         for _, spot in spots_df.iterrows():
-            x_c, y_c = int(round(spot[config.csv_x_col])), int(round(spot[config.csv_y_col]))
+            spot_pos = (spot[config.csv_x_col], spot[config.csv_y_col])
+            patch_orig, (gx1, gy1) = zoom_spot_loc(original_frame, spot_pos, reward_cfg['fit_region_size'])
+            fit_ok_orig, params_orig = fit_rotated_gaussian_2d(patch_orig, gx1, gy1)
 
-            signal_mask = (x_coords - x_c)**2 + (y_coords - y_c)**2 <= signal_radius**2
-            bg_mask_outer = (x_coords - x_c)**2 + (y_coords - y_c)**2 <= bg_outer_radius**2
-            bg_mask_inner = (x_coords - x_c)**2 + (y_coords - y_c)**2 < bg_inner_radius**2
+            if not fit_ok_orig or \
+               params_orig['fit_amplitude'] < fp_filter_cfg['min_amplitude'] or \
+               max(params_orig['fit_sx'], params_orig['fit_sy']) > fp_filter_cfg['max_sigma']:
+                continue
+
+            patch_denoised, _ = zoom_spot_loc(denoised_frame, spot_pos, reward_cfg['fit_region_size'])
+            fit_ok_denoised, params_denoised = fit_rotated_gaussian_2d(patch_denoised, gx1, gy1)
+
+            if not fit_ok_denoised:
+                frame_spot_rewards.append(reward_cfg['erased_spot_penalty'])
+                reward_details['penalty'].append(reward_cfg['erased_spot_penalty'])
+                continue
+
+            h, w = denoised_frame.shape
+            y_coords, x_coords = np.ogrid[:h, :w]
+            bg_mask_outer = (x_coords - params_denoised['fit_x'])**2 + (y_coords - params_denoised['fit_y'])**2 <= reward_cfg['bg_annulus_outer_radius']**2
+            bg_mask_inner = (x_coords - params_denoised['fit_x'])**2 + (y_coords - params_denoised['fit_y'])**2 < reward_cfg['bg_annulus_inner_radius']**2
             background_mask = bg_mask_outer & ~bg_mask_inner
 
-            if x_c < bg_outer_radius or x_c >= w - bg_outer_radius or \
-               y_c < bg_outer_radius or y_c >= h - bg_outer_radius:
-                continue 
+            bg_pixels = denoised_frame[background_mask]
+            if bg_pixels.size > 1:
+                local_bg_std = np.std(bg_pixels)
+            else:
+                local_bg_std = 1e-6 # Assign a small, non-zero value if mask is empty
 
-            signal_pixels = image[signal_mask]
-            background_pixels = image[background_mask]
+            snr = params_denoised['fit_amplitude'] / (local_bg_std + 1e-7)
+            reward_snr = np.tanh(snr / 10.0)
+            reward_details['snr'].append(reward_snr)
 
-            if background_pixels.size > 1:
-                mean_signal = np.mean(signal_pixels)
-                mean_bg = np.mean(background_pixels)
-                std_bg = np.std(background_pixels)
+            intensity_error = abs(params_denoised['fit_amplitude'] - params_orig['fit_amplitude']) / (params_orig['fit_amplitude'] + 1e-7)
+            reward_intensity = -intensity_error
+            reward_details['intensity'].append(reward_intensity)
 
-                if std_bg > 1e-6: 
-                    snr = (mean_signal - mean_bg) / std_bg
-                    spot_snrs.append(snr)
+            dist = math.sqrt((params_denoised['fit_x'] - params_orig['fit_x'])**2 + (params_denoised['fit_y'] - params_orig['fit_y'])**2)
+            spot_size = (params_orig['fit_sx'] + params_orig['fit_sy']) / 2
+            localization_error = dist / (spot_size + 1e-7)
+            reward_localization = -localization_error
+            reward_details['localization'].append(reward_localization)
 
-        if not spot_snrs:
-            batch_rewards.append(0.0)
+            total_spot_reward = (weights['snr'] * reward_snr +
+                                 weights['intensity'] * reward_intensity +
+                                 weights['localization'] * reward_localization)
+            frame_spot_rewards.append(total_spot_reward)
+
+        if not frame_spot_rewards:
+             batch_rewards.append(0.0)
         else:
-            #the reward is the average SNR. We clip to prevent extreme values.
-            avg_snr = np.mean(spot_snrs)
-            batch_rewards.append(np.clip(avg_snr, -10, 50))
+             batch_rewards.append(np.mean(frame_spot_rewards))
+        batch_reward_details.append(reward_details)
 
-    return tf.constant(batch_rewards, dtype=tf.float32), {}
+    return tf.constant(batch_rewards, dtype=tf.float32), batch_reward_details
+
 
 @register_keras_serializable()
 class CentralFrameExtractionLayer(Layer):
@@ -449,14 +439,27 @@ def create_rl_state_for_batch(X_center_batch_tf, trackmate_spots_batch, config):
     X_np = X_center_batch_tf.numpy().squeeze()
     for i in range(X_np.shape[0]):
         frame_np, spots_df = X_np[i], trackmate_spots_batch[i]
-        num_tm_spots, mean_tm_snr, mean_tm_quality = 0.0, 0.0, 0.0
+        num_tm_spots = 0.0
+        median_tm_snr = 0.0
+        median_tm_quality = 0.0
+        
         if spots_df is not None and not spots_df.empty:
             num_tm_spots = len(spots_df)
-            if config.csv_snr_col in spots_df.columns: mean_tm_snr = spots_df[config.csv_snr_col].mean()
-            if config.csv_quality_col in spots_df.columns: mean_tm_quality = spots_df[config.csv_quality_col].mean()
-        state_features = [np.mean(frame_np), np.std(frame_np), float(num_tm_spots), mean_tm_snr, mean_tm_quality]
+            if config.csv_snr_col in spots_df.columns:
+                median_tm_snr = spots_df[config.csv_snr_col].median()
+            if config.csv_quality_col in spots_df.columns:
+                median_tm_quality = spots_df[config.csv_quality_col].median()
+                
+        state_features = [
+            np.median(frame_np),
+            np.std(frame_np),
+            float(num_tm_spots),
+            median_tm_snr,
+            median_tm_quality
+        ]
         batch_states.append(state_features)
     return tf.convert_to_tensor(np.array(batch_states), dtype=tf.float32)
+    
 
 def generate_debug_images(unet, data_generator, epoch, output_dir):
     try:
@@ -543,7 +546,7 @@ def main(args):
             unet_grads_clipped, _ = tf.clip_by_global_norm(unet_grads, 1.0)
             unet_optimizer.apply_gradients(zip(unet_grads_clipped, unet_model.trainable_variables))
 
-            rewards_tf, _ = calculate_snr_reward(y_pred_b, tm_list_b, args)
+            rewards_tf, _ = calculate_composite_reward(tf.constant(X_center_b, dtype=tf.float32), y_pred_b, tm_list_b, args)
             
             if previous_rl_states_numpy is not None and previous_rl_states_numpy.shape[0] == current_rl_states_tf.shape[0]:
                 for i in range(len(previous_rl_states_numpy)):
@@ -576,14 +579,17 @@ def main(args):
             unet_grads_clipped, unet_grad_norm = tf.clip_by_global_norm(unet_grads, 1.0)
             unet_optimizer.apply_gradients(zip(unet_grads_clipped, unet_model.trainable_variables))
             
-            rewards_tf, _ = calculate_snr_reward(y_pred_b, tm_list_b, args)
+            rewards_tf, _ = calculate_composite_reward(tf.constant(X_center_b, dtype=tf.float32), y_pred_b, tm_list_b, args)
             
             if previous_rl_states_numpy is not None and previous_rl_states_numpy.shape[0] == current_rl_states_tf.shape[0]:
                 for i in range(len(previous_rl_states_numpy)):
                     ddpg_agent.record_experience(previous_rl_states_numpy[i], previous_actions_numpy[i], previous_rewards_numpy[i], current_rl_states_tf[i].numpy(), False)
             previous_rl_states_numpy, previous_actions_numpy, previous_rewards_numpy = current_rl_states_tf.numpy(), actions_noisy.numpy(), rewards_tf.numpy()
 
-            learn_results = ddpg_agent.learn()
+            learn_results = None
+            if len(ddpg_agent.replay_buffer) > args.rl_batch_size:
+                for _ in range(args.agent_updates_per_step):
+                    learn_results = ddpg_agent.learn()
 
             metrics['unet_loss'].update_state(unet_loss); metrics['unet_grad'].update_state(unet_grad_norm); metrics['reward'].update_state(tf.reduce_mean(rewards_tf))
             if learn_results and all(res is not None for res in learn_results):
@@ -667,6 +673,7 @@ if __name__ == "__main__":
     parser.add_argument("--tau", type=float, default=0.005, help="Soft update parameter for target networks.")
     parser.add_argument("--action_noise_stddev_fraction", type=float, default=0.05, help="Std dev of action noise as a fraction of action range.")
     parser.add_argument("--lambda_geo_bounds", type=float, nargs=2, default=[0.01, 0.5], help="Min and max bounds for the lambda_geo action.")
+    parser.add_argument("--agent_updates_per_step", type=int, default=2, help="Number of DDPG agent updates per step.")
     
     # --- RL State & Reward ---
     parser.add_argument("--state_dim", type=int, default=5, help="Dimension of the RL state vector.")
@@ -693,11 +700,21 @@ if __name__ == "__main__":
     # --- Post-process args to reconstruct nested dictionaries ---
     args.data_split = {"train": args.train_split, "val": args.val_split}
     
-    # This is the active reward config used by calculate_snr_reward
+    # This is the active reward config used by calculate_composite_reward
     args.rl_reward_config = {
-        'signal_radius': args.signal_radius,
-        'bg_inner_radius': args.bg_inner_radius,
-        'bg_outer_radius': args.bg_outer_radius
+        'fit_region_size': 9,
+        'bg_annulus_inner_radius': args.bg_inner_radius,
+        'bg_annulus_outer_radius': args.bg_outer_radius,
+        'weights': {
+            'snr': 0.34,
+            'intensity': 0.33,
+            'localization': 0.33
+        },
+        'fp_filter': {
+            'min_amplitude': 20.0,
+            'max_sigma': 3.0,
+        },
+        'erased_spot_penalty': -1.5
     }
     
     # Hard-coded noise regions
