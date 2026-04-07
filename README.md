@@ -218,6 +218,7 @@ Exactly this folder is what `inference_lambda_RL.py` expects.
 **Can I run per-frame denoising?**  
 - Yes: set `--sequence_length 1` (still uses 3D layers but no temporal context).
 
+<!--
 ---
 
 ## Citing
@@ -235,4 +236,4 @@ If you use this code, please cite the paper and this repository:
 ```
 
 ---
-
+-->
