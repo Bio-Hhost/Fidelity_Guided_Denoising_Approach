@@ -71,39 +71,54 @@ def analyze_noise_regions(frames, noise_regions):
     noise_pixels = np.array(noise_pixels)
     background_level = np.median(noise_pixels)
     return background_level
+    
+def pad_to_divisible(image_stack, divisor=8):
+    num_frames, h, w = image_stack.shape
 
+    pad_h = (divisor - h % divisor) % divisor
+    pad_w = (divisor - w % divisor) % divisor
+
+    pad_top = pad_h // 2
+    pad_bottom = pad_h - pad_top
+    pad_left = pad_w // 2
+    pad_right = pad_w - pad_left
+
+    padded_stack = np.pad(
+        image_stack,
+        ((0, 0), (pad_top, pad_bottom), (pad_left, pad_right)),
+        mode='reflect'
+    )
+    print(f"Original HxW: {h}x{w}. Padded to divisible-by-{divisor} size: {padded_stack.shape[1]}x{padded_stack.shape[2]}")
+    return padded_stack, (pad_top, pad_bottom, pad_left, pad_right)
+
+def pad_video_sequence(frames, sequence_length):
+    pad_size = sequence_length // 2
+    if pad_size == 0:
+        return frames
+    padded_frames = np.pad(frames, ((pad_size, pad_size), (0, 0), (0, 0)), mode='reflect')
+    print(f"Applied reflection padding of size {pad_size} to video sequence (temporal).")
+    return padded_frames
+    
 def evaluate_video(input_tiff_path, training_run_folder, output_path):
     print("--- Step 1: Loading Configuration ---")
     config_path = os.path.join(training_run_folder, 'config.json')
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Config file not found at: {config_path}")
-
     with open(config_path, 'r') as f:
         config = json.load(f)
     print("Configuration loaded successfully.")
 
     print("\n--- Step 2: Loading U-Net Model ---")
+    sequence_length = config['sequence_length']
+    input_shape = (None, None, sequence_length, config['channels'])
+    unet_model = build_3d_unet(input_shape, sequence_length)
 
-    final_model_path = os.path.join(training_run_folder, "models", "unet_final.keras")
     best_weights_path = os.path.join(training_run_folder, "models", "unet_best.weights.h5")
+    if not os.path.exists(best_weights_path):
+         raise FileNotFoundError(f"The required weights file was not found: {best_weights_path}")
 
-    if os.path.exists(final_model_path):
-        print(f"Loading full model from: {final_model_path}")
-        unet_model = tf.keras.models.load_model(final_model_path, custom_objects={
-            'CentralFrameExtractionLayer': CentralFrameExtractionLayer
-        })
-    elif os.path.exists(best_weights_path):
-        print("Final model not found. Building model from config and loading best weights.")
-
-        input_shape = (config['img_height'], config['img_width'], config['sequence_length'], config['channels'])
-        unet_model = build_3d_unet(input_shape, config['sequence_length'])
-        unet_model.load_weights(best_weights_path)
-        print(f"Loaded best weights from: {best_weights_path}")
-    else:
-        raise FileNotFoundError(f"No trained model or weights file found in {os.path.join(training_run_folder, 'models')}")
-
-    print("Model loaded successfully.")
-    unet_model.summary()
+    unet_model.load_weights(best_weights_path)
+    print(f"Model built with flexible dimensions and loaded weights from: {best_weights_path}")
 
     print("\n--- Step 3: Loading and Preprocessing Video ---")
     try:
@@ -115,73 +130,59 @@ def evaluate_video(input_tiff_path, training_run_folder, output_path):
             raise IOError(f"Could not read the input TIFF file: {input_tiff_path}")
 
     video_frames = np.array(video_frames, dtype=np.float32)
-    num_frames, height, width = video_frames.shape
-    print(f"Video loaded: {num_frames} frames, {height}x{width} resolution.")
+    original_shape = video_frames.shape
+    num_frames_orig = original_shape[0]
+    print(f"Video loaded: {num_frames_orig} frames, {original_shape[1]}x{original_shape[2]} resolution.")
 
     background_level = analyze_noise_regions(video_frames, config['noise_analysis_regions'])
     print(f"Estimated background level: {background_level:.2f}")
     video_frames -= background_level
     print("Background subtracted from all frames.")
 
+    spatially_padded_frames, spatial_pads = pad_to_divisible(video_frames, 8)
+    temporally_padded_frames = pad_video_sequence(spatially_padded_frames, sequence_length)
+
     print("\n--- Step 4: Denoising Video ---")
-    sequence_length = config['sequence_length']
-    center_offset = sequence_length // 2
-
     denoised_frames = []
-    frame_sequence = deque(maxlen=sequence_length)
 
-    for i in range(num_frames):
-        pad_idx = np.clip(i, 0, num_frames - 1)
-        
-        if i == 0:
-            for _ in range(sequence_length):
-                frame_sequence.append(video_frames[0])
-        else:
-            frame_to_add_idx = min(i + center_offset, num_frames - 1)
-            frame_sequence.append(video_frames[frame_to_add_idx])
-            
-        # At i=0, sequence is [F0, F0, F0, F0, F0] (for seq_len=5)
-        # At i=1, sequence is [F0, F0, F0, F0, F3]
-        # At i=2, sequence is [F0, F0, F0, F3, F4]
-        # At i=3, sequence is [F0, F0, F3, F4, F5]
-        # ...
-        
-        current_sequence = []
-        for j in range(-center_offset, center_offset + 1):
-            frame_index = np.clip(i + j, 0, num_frames - 1)
-            current_sequence.append(video_frames[frame_index])
-            
-        model_input = np.stack(current_sequence, axis=-1)
+    for i in range(num_frames_orig):
+        frame_sequence = temporally_padded_frames[i : i + sequence_length]
+        model_input = np.transpose(frame_sequence, (1, 2, 0))
         model_input = np.expand_dims(model_input, axis=(0, -1))
-        
-        if i == 0:
-            for _ in range(sequence_length):
-                frame_sequence.append(video_frames[0])
-        else:
-            frame_sequence.append(video_frames[min(i + center_offset, num_frames - 1)])
-        
-        model_input = np.array(frame_sequence) # Shape (T, H, W)
-        model_input = np.transpose(model_input, (1, 2, 0)) # Shape (H, W, T)
-        model_input = np.expand_dims(model_input, axis=(0, -1)) # Shape (1, H, W, T, 1)
 
         denoised_center_frame = unet_model.predict(model_input, verbose=0)
-        denoised_center_frame = np.squeeze(denoised_center_frame)
-        denoised_frames.append(denoised_center_frame)
+        denoised_frames.append(np.squeeze(denoised_center_frame))
 
-        print(f"\rProcessing frame {i + 1}/{num_frames}...", end="")
+        print(f"\rProcessing frame {i + 1}/{num_frames_orig}...", end="")
 
     print("\nVideo denoising complete.")
-
-    print("\n--- Step 5: Saving Denoised Video ---")
+    print("\n--- Step 5: Post-processing and Saving Denoised Video ---")
     denoised_video = np.array(denoised_frames)
-    denoised_video += background_level
-    denoised_video = np.clip(denoised_video, 0, 65535).astype(np.uint16)
 
-    out_dir = os.path.dirname(output_path)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
+    pad_top, pad_bottom, pad_left, pad_right = spatial_pads
+    h_new, w_new = denoised_video.shape[1], denoised_video.shape[2]
     
-    tifffile.imwrite(output_path, denoised_video, imagej=True)
+    crop_y_end = h_new - pad_bottom if pad_bottom > 0 else h_new
+    crop_x_end = w_new - pad_right if pad_right > 0 else w_new
+
+    denoised_video_cropped = denoised_video[:, pad_top:crop_y_end, pad_left:crop_x_end]
+    print(f"Cropped denoised video back to original size: {denoised_video_cropped.shape}")
+
+    denoised_video_cropped += background_level
+    denoised_video_final = np.clip(denoised_video_cropped, 0, 65535).astype(np.uint16)
+
+    num_frames, height, width = denoised_video_final.shape
+    imagej_hyperstack = denoised_video_final.reshape(num_frames, 1, 1, height, width)
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    tifffile.imwrite(
+        output_path,
+        imagej_hyperstack,
+        imagej=True,
+        metadata={'axes': 'TZCYX'} 
+    )
+
     print(f"\n✅ Denoised video successfully saved to: {output_path}")
 
 def main(args):
@@ -204,10 +205,9 @@ def main(args):
 
     try:
         evaluate_video(str(input_path), str(model_folder_path), args.output_file)
-    except (FileNotFoundError, IOError, ValueError, Exception) as e:
+    except Exception as e:
         print(f"\n❌ An error occurred: {e}")
-
-
+        
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Denoise a video (multi-page TIFF) using a trained RL-U-Net model."
