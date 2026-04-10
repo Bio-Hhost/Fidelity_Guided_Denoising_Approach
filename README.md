@@ -6,7 +6,7 @@ This framework is presented in two distinct approaches:
 1.  **Static $\lambda$:** A 3D U-Net trained with a manually-tuned, static fidelity weight ($\lambda$).
 2.  **Adaptive (RL) $\lambda$:** A 3D U-Net trained jointly with a reinforcement learning (RL) agent that dynamically selects the optimal $\lambda$ for each training batch.
 
-[![Paper](https://img.shields.io/badge/paper-link-b31b1b.svg)](https://link.to.paper)
+<!-- [![Paper](https://img.shields.io/badge/paper-link-b31b1b.svg)](https://link.to.paper) -->
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
