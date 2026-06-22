@@ -8,6 +8,7 @@ import tensorflow as tf
 from scipy.optimize import curve_fit
 from tensorflow.keras import layers, Model, optimizers
 import random
+import math
 from collections import deque
 from tensorflow.keras.layers import Layer
 from tensorflow.keras.utils import register_keras_serializable
@@ -86,7 +87,7 @@ def fit_rotated_gaussian_2d(region, global_x1, global_y1):
     try:
         popt, _ = curve_fit(fit_func, (X_mesh, Y_mesh), z_flat, p0=initial_guess, bounds=bounds, maxfev=3000, method='trf', ftol=1e-3, xtol=1e-3)
         if popt[0] <= 0 or popt[3] < 0.2 or popt[4] < 0.2: return False, None
-        return True, {'fit_amplitude': popt[0], 'fit_sx': popt[3], 'fit_sy': popt[4]}
+        return True, {'fit_amplitude': popt[0], 'fit_x': popt[1], 'fit_y': popt[2], 'fit_sx': popt[3], 'fit_sy': popt[4]}
     except Exception: return False, None
 
 def create_background_mask_from_spots(frame_shape, spots_df, exclude_radius_px, config):
@@ -130,69 +131,71 @@ def estimate_noise_parameters(all_frames, regions):
     background_level, gaussian_variance = analyze_noise_regions(all_frames, regions)
     gain_estimate = analyze_intensity_variance_relationship(all_frames, background_level)
     return {'gain': gain_estimate, 'sigma_sq': gaussian_variance, 'background_level': background_level}
+    
+def pad_video_sequence(frames, sequence_length):
+    pad_size = sequence_length // 2
+    if pad_size == 0:
+        return frames, 0
+    padded_frames = np.pad(frames, ((pad_size, pad_size), (0, 0), (0, 0)), mode='reflect')
+    print(f"Applied reflection padding of size {pad_size} to video sequence.")
+    return padded_frames, pad_size
 
-def create_data_generators(all_frames, spots_map, config):
-    num_frames = len(all_frames)
+def create_data_generators(all_padded_frames, spots_map, config, pad_size):
+    num_frames = len(all_padded_frames) - 2 * pad_size   # original frame count
     indices = np.arange(num_frames)
-    np.random.shuffle(indices)
+    np.random.shuffle(indices)                            # random train/val split
     split_idx = int(num_frames * config.data_split['train'])
     train_indices, val_indices = indices[:split_idx], indices[split_idx:]
-
     train_generator = RLDataGenerator(
-        all_frames[train_indices], spots_map, config, is_validation=False
+        all_padded_frames, spots_map, config.sequence_length, config.unet_batch_size,
+        pad_size, train_indices, is_validation=False
     )
     val_generator = RLDataGenerator(
-        all_frames[val_indices], spots_map, config, is_validation=True
+        all_padded_frames, spots_map, config.sequence_length, config.unet_batch_size,
+        pad_size, val_indices, is_validation=True
     )
     return train_generator, val_generator
 
 class RLDataGenerator(tf.keras.utils.Sequence):
-    def __init__(self, frames, spots_map, config, mask_ratio=0.1, is_validation=False):
-        self.frames = frames.astype(np.float32)
+    def __init__(self, all_padded_frames, spots_map, sequence_length, batch_size,
+                 pad_size, frame_indices, mask_ratio=0.1, is_validation=False):
+        self.all_padded_frames = all_padded_frames.astype(np.float32)
         self.spots_map = spots_map
-        self.sequence_length = config.sequence_length
-        self.batch_size = config.unet_batch_size
+        self.sequence_length = sequence_length
+        self.batch_size = batch_size
+        self.pad_size = pad_size
         self.mask_ratio = mask_ratio
-        self.is_validation = is_validation 
-
-        self.h, self.w = self.frames[0].shape
+        self.is_validation = is_validation
+        self.h, self.w = self.all_padded_frames[0].shape
         self.center_offset = self.sequence_length // 2
-
-        num_frames = len(self.frames)
-        self.indices = np.arange(num_frames - self.sequence_length + 1)
+        self.original_frame_indices = frame_indices
+        self.indices = self.original_frame_indices   # alias used by the debug-image helper
         self.on_epoch_end()
 
     def __len__(self):
-        return int(np.floor(len(self.indices) / self.batch_size))
+        return int(np.floor(len(self.original_frame_indices) / self.batch_size))
 
     def __getitem__(self, idx):
-        batch_indices = self.indices[idx * self.batch_size:(idx + 1) * self.batch_size]
-
+        batch_original_indices = self.shuffled_indices[idx * self.batch_size:(idx + 1) * self.batch_size]
         X_seq_b, Y_true_center_b, mask_b = [], [], []
         X_center_noisy_b, tm_spots_list_b = [], []
-
-        for seq_start_index in batch_indices:
-            sequence = self.frames[seq_start_index : seq_start_index + self.sequence_length]
+        for original_frame_idx in batch_original_indices:
+            seq_start_index = original_frame_idx
+            sequence = self.all_padded_frames[seq_start_index : seq_start_index + self.sequence_length]
             X_seq = np.transpose(sequence, (1, 2, 0))
-            X_seq = np.expand_dims(X_seq, axis=-1) # Shape: (H, W, Seq, 1)
-
-            center_frame_global_idx = seq_start_index + self.center_offset
-            center_frame_noisy = self.frames[center_frame_global_idx]
-
-            mask = np.random.choice([0, 1], size=(self.h, self.w), p=[1 - self.mask_ratio, self.mask_ratio]).astype(np.float32)
-
+            X_seq = np.expand_dims(X_seq, axis=-1)
+            center_frame_noisy = self.all_padded_frames[original_frame_idx + self.pad_size]
+            mask = np.random.choice([0, 1], size=(self.h, self.w),
+                                    p=[1 - self.mask_ratio, self.mask_ratio]).astype(np.float32)
             X_seq_masked = X_seq.copy()
             center_frame_in_seq = X_seq_masked[:, :, self.center_offset, 0]
-            center_frame_in_seq[mask == 1] = 0 
-
-            spots_df = self.spots_map.get(center_frame_global_idx, pd.DataFrame())
-
+            center_frame_in_seq[mask == 1] = 0
+            spots_df = self.spots_map.get(original_frame_idx, pd.DataFrame())
             X_seq_b.append(X_seq_masked)
             Y_true_center_b.append(center_frame_noisy.copy())
             mask_b.append(mask)
             X_center_noisy_b.append(center_frame_noisy)
             tm_spots_list_b.append(spots_df)
-
         return (
             np.array(X_seq_b),
             (np.array(Y_true_center_b), np.array(mask_b)),
@@ -201,8 +204,9 @@ class RLDataGenerator(tf.keras.utils.Sequence):
         )
 
     def on_epoch_end(self):
+        self.shuffled_indices = self.original_frame_indices.copy()
         if not self.is_validation:
-            np.random.shuffle(self.indices)
+            np.random.shuffle(self.shuffled_indices)
 
 def calculate_composite_reward(X_center_batch_tf, y_pred_batch_tf, trackmate_spots_batch, config):
     batch_rewards = []
@@ -515,13 +519,14 @@ def main(args):
         print("\nEstimating noise parameters...")
         NOISE_PARAMS = estimate_noise_parameters(all_frames, args.noise_analysis_regions)
         print(f"Estimated Noise Params: {NOISE_PARAMS}")
-        all_frames -= NOISE_PARAMS['background_level']
+        padded_frames, pad_size = pad_video_sequence(all_frames, args.sequence_length)
+        padded_frames -= NOISE_PARAMS['background_level']
         
     except Exception as e:
         print(f"ERROR during data loading or noise estimation. Details: {e}"); return
 
-    train_generator, val_generator = create_data_generators(all_frames, trackmate_spots_by_frame, args)
-    print(f"\nData split: {len(train_generator.frames)} train frames, {len(val_generator.frames)} validation frames.")
+    train_generator, val_generator = create_data_generators(padded_frames, trackmate_spots_by_frame, args, pad_size)
+    print(f"\nData split: {len(train_generator.original_frame_indices)} train centers, {len(val_generator.original_frame_indices)} validation frames.")
 
     input_shape = (args.img_height, args.img_width, args.sequence_length, args.channels)
     unet_model = build_3d_unet(input_shape, args.sequence_length)
