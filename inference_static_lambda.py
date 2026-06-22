@@ -126,7 +126,21 @@ def prepare_sequence(frames, idx, sequence_length):
         sequence = sequence[start : start + sequence_length]
 
     return np.stack(sequence, axis=-1) # shape: (H, W, sequence_length)
+    
+def pad_to_divisible(image_stack, divisor):
+    num_frames, h, w = image_stack.shape
+    pad_h = (divisor - h % divisor) % divisor
+    pad_w = (divisor - w % divisor) % divisor
+    pad_top, pad_left = pad_h // 2, pad_w // 2
+    pad_bottom, pad_right = pad_h - pad_top, pad_w - pad_left
+    padded = np.pad(image_stack, ((0, 0), (pad_top, pad_bottom), (pad_left, pad_right)), mode='reflect')
+    return padded, (pad_top, pad_bottom, pad_left, pad_right)
 
+def unpad_stack(padded_stack, pad_info):
+    pad_top, pad_bottom, pad_left, pad_right = pad_info
+    _, H, W = padded_stack.shape
+    return padded_stack[:, pad_top:H - pad_bottom, pad_left:W - pad_right]
+    
 def denoise_video(model, frames, sequence_length,
                   batch_size, background_level):
     print("Preparing frames for denoising...")
@@ -209,12 +223,15 @@ def main(args):
     model.summary()
 
     print("Denoising video...")
-    denoised_frames = denoise_video(
-        model, frames,
+    H_model = model.input_shape[1]
+    frames_padded, pad_info = pad_to_divisible(frames, divisor=H_model)
+    denoised_padded = denoise_video(
+        model, frames_padded,
         sequence_length=args.sequence_length,
         batch_size=args.batch_size,
         background_level=background_level
     )
+    denoised_frames = unpad_stack(denoised_padded, pad_info)
 
     print(f"Clipping values to [{args.clip_min}, {args.clip_max}] and converting to {args.output_dtype}")
     output_dtype = np.dtype(args.output_dtype)
