@@ -291,6 +291,9 @@ def analyze_intensity_variance_relationship(frames, background_level, patch_size
                 patch = frame_corrected[y:y + patch_size, x:x + patch_size]
                 if patch.size != patch_size * patch_size:
                     continue
+                if np.max(patch) > np.percentile(frame_corrected, 99.9) or \
+                   np.min(patch) < np.percentile(frame_corrected, 0.1):
+                    continue
                 patch_mean = np.mean(patch)
                 patch_variance = np.var(patch, ddof=1)
 
@@ -471,7 +474,10 @@ def main(args):
 
     opt = tf.keras.optimizers.Adam(
         learning_rate=args.learning_rate,
-        clipnorm=1.0  # From original script
+        beta_1=0.9,
+        beta_2=0.99,
+        epsilon=1e-08,
+        clipnorm=1.0
     )
 
     loss_fn = PoissonGaussianNLLLossWithGeometry(
@@ -487,7 +493,7 @@ def main(args):
         monitor='val_loss',
         patience=args.es_patience,
         restore_best_weights=True,
-        min_delta=1e-5  # Slightly larger delta
+        min_delta=1e-4
     )
 
     model_checkpoint = ModelCheckpoint(
@@ -501,7 +507,7 @@ def main(args):
         monitor='val_loss',
         factor=0.5,
         patience=args.lr_patience,
-        min_lr=1e-7,  # Lower min_lr
+        min_lr=1e-6,
         verbose=1
     )
     callbacks_list = [early_stopping, model_checkpoint, reduce_lr]
