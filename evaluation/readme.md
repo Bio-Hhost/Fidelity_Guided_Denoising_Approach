@@ -202,6 +202,7 @@ python evaluate_experimental.py \
     --output_dir_name "Experimental_Results" \
     --methods "N2V" "DeepCAD-RT" "λ = RL" "λ = 0.1 (T=1)" \
     --adaptive_radii \
+    --spots_to_process 10000 \
     --exclude_training_data \
     --save_visuals
 ```
