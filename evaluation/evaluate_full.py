@@ -395,8 +395,8 @@ def main(args):
         
     print(f"Successfully combined threshold results into: {combined_csv_path}")
 
-   print(f"\n--- Step 2: Running Comprehensive Evaluation ---") 
-   print(f"\nSearching for TIF files in: {input_data_dir}")
+    print(f"\n--- Step 2: Running Comprehensive Evaluation ---") 
+    print(f"\nSearching for TIF files in: {input_data_dir}")
     all_tif_files = [p for p in input_data_dir.glob("*.tif") if "softmasked" not in p.name]
     scale_pattern = re.compile(r"scale_(\d+\.\d+)|sim_(\d+\.\d+)")
     
@@ -492,7 +492,7 @@ def parse_args():
                         help="Path to the directory containing all noisy and denoised .tif files.")
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Path to the base directory where comprehensive results (CSVs, plots) will be saved.")
-   parser.add_argument("--threshold_scan_dir", type=str, required=True,
+    parser.add_argument("--threshold_scan_dir", type=str, required=True,
                            help="Path to the base directory containing the 'Group_Scale_...' folders from the 'evaluate_detection_threshold_scan.py' scan.")
 
     # --- Filtering ---
