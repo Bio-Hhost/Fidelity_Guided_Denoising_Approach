@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import norm
 import argparse
 from pathlib import Path
+import time, subprocess, platform
 
 def analyze_noise_regions(frames, noise_regions):
     noise_pixels = []
@@ -535,6 +536,7 @@ def main(args):
     print("U-Net and DDPG Agent initialized.")
 
     print("\n--- Starting RL Warm-up Phase ---")
+    _train_t0 = time.perf_counter()
     previous_rl_states_numpy, previous_actions_numpy, previous_rewards_numpy = None, None, None
     for epoch in range(args.rl_warmup_epochs):
         print(f"Warm-up Epoch {epoch + 1}/{args.rl_warmup_epochs}")
@@ -566,7 +568,7 @@ def main(args):
 
     for epoch in range(args.total_epochs):
         print(f"\nEpoch {epoch+1}/{args.total_epochs}")
-        metrics = {k: tf.keras.metrics.Mean() for k in ['unet_loss', 'reward', 'actor_loss', 'critic_loss', 'actor_grad', 'critic_grad', 'unet_grad']}
+        metrics = {k: tf.keras.metrics.Mean() for k in ['unet_loss', 'reward', 'actor_loss', 'critic_loss', 'actor_grad', 'critic_grad', 'unet_grad', 'mean_lambda']}
         current_noise_stddev = ddpg_agent.action_noise_stddev * (args.noise_decay ** epoch)
 
         for step in range(args.steps_per_epoch):
@@ -596,7 +598,7 @@ def main(args):
                 for _ in range(args.agent_updates_per_step):
                     learn_results = ddpg_agent.learn()
 
-            metrics['unet_loss'].update_state(unet_loss); metrics['unet_grad'].update_state(unet_grad_norm); metrics['reward'].update_state(tf.reduce_mean(rewards_tf))
+            metrics['unet_loss'].update_state(unet_loss); metrics['unet_grad'].update_state(unet_grad_norm); metrics['reward'].update_state(tf.reduce_mean(rewards_tf)); metrics['mean_lambda'].update_state(tf.reduce_mean(actions_noisy))
             if learn_results and all(res is not None for res in learn_results):
                 actor_loss, critic_loss, actor_grad, critic_grad = learn_results
                 metrics['actor_loss'].update_state(actor_loss); metrics['critic_loss'].update_state(critic_loss); metrics['actor_grad'].update_state(actor_grad); metrics['critic_grad'].update_state(critic_grad)
