@@ -12,6 +12,8 @@ from scipy.stats import norm
 from sklearn.linear_model import LinearRegression
 import argparse
 from pathlib import Path
+import time, json, subprocess, platform
+from datetime import datetime
 
 @register_keras_serializable()
 class CentralFrameExtractionLayer(Layer):
@@ -383,6 +385,11 @@ def main(args):
     np.random.seed(args.seed)
     tf.random.set_seed(args.seed)
 
+    run_timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_dir = Path(args.output_model).parent / f"static_T{args.sequence_length}_geo{args.lambda_geo}_{run_timestamp}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    print(f"--- All artifacts for this run -> {run_dir} ---")
+
     print("Loading frames...")
     all_frames_list = []
     for f_path in args.input_files:
@@ -441,7 +448,7 @@ def main(args):
         'gaussian_variance': gaussian_variance,
         'gain_estimate': gain_estimate
     }
-    np.save(args.output_noise_params, noise_params)
+    np.save(run_dir / "noise_parameters.npy", noise_params)
     print(f"Saved noise parameters to {args.output_noise_params}")
 
     train_frames, val_frames, test_frames = sequential_split(
@@ -497,7 +504,7 @@ def main(args):
     )
 
     model_checkpoint = ModelCheckpoint(
-        filepath=args.output_model,
+        filepath=str(run_dir / "best_model.keras"),
         monitor="val_loss",
         save_best_only=True,
         mode="min"
