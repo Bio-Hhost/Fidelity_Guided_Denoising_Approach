@@ -6,21 +6,15 @@ A small, self-contained example for running both denoising inference pipelines e
 
 ## Getting the trained models
 
-The complete model files are not committed to the repo. Download them from the Zenodo record — see `<MODEL_DOWNLOAD_LINK>`.
+The **RL demo runs straight from a clone** — its weights ship in `rl_demo_run/models/`, alongside a demo-specific `config.json` whose background regions are the four 128 px corners rather than the full-frame regions of the real run.
 
-**Static** (`--model_file` is a single `.keras`). Pick the run that matches the result you're reproducing. The demo below uses the **seq=1, lambda_geo=0.001** model, placed at:
+The **static model is not here in the repo**: at 62 MB it is over GitHub's upload limit. Download it from the Zenodo record (see `<MODEL_DOWNLOAD_LINK>`) and place it at:
 
 ```
 example_data/static_models/unet_static_seq1_lambda0.001.keras
 ```
 
-
-**RL** (`--model_folder` is a folder): copy the training run so the folder holds `config.json` and `models/unet_best.weights.h5`:
-
-```
-example_data/rl_models/config.json
-example_data/rl_models/models/unet_best.weights.h5
-```
+It is `best_model.keras` from `trained_models/static_models_new/static_T1_geo0.001_20260723-195633/`. For a different fidelity weight or temporal window, take the matching run from that same directory; `--sequence_length` must match the run's `T`.
 
 ## Run the static pipeline (verified)
 
