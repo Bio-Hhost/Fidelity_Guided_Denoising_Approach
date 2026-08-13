@@ -1,0 +1,5 @@
+dataset,label,n,spots_per_frame,n_den_within,n_raw_within,agree_den_px,agree_raw_px,file
+19_Green,Peptide (High Conc.) A,6000,6.0,5706,5702,0.40667050134913574,0.390305239745658,results/r11_evidence/cells/exp_19_Green_RLmain_MLE.csv
+20_Green,Peptide (High Conc.) B,6000,6.012024048096192,5713,5708,0.397332310563226,0.37119063772802946,results/r11_evidence/cells/exp_20_Green_RLmain_MLE.csv
+29_Green,Peptide (Low Conc.) A,6000,6.018054162487462,5618,5622,0.3749013714814174,0.3568483220136773,results/r11_evidence/cells/exp_29_Green_RLmain_MLE.csv
+30_Green,Peptide (Low Conc.) B,6000,6.012024048096192,5796,5795,0.36792488290716696,0.3535710012918446,results/r11_evidence/cells/exp_30_Green_RLmain_MLE.csv

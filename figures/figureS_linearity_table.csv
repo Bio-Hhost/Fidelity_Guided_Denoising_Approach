@@ -1,0 +1,8 @@
+route,method,n,slope,intercept,r_squared,unit
+normalized_pixel_sum,λ = 0.001 (T=1),39891,1.434783,-1.290062,0.923105,normalized
+normalized_pixel_sum,λ = 0.1 (T=1),39891,1.042676,-0.373324,0.996910,normalized
+normalized_pixel_sum,λ = RL,39891,1.148012,-3.809049,0.971628,normalized
+normalized_pixel_sum,N2V,39891,1.274118,-1.992022,0.955738,normalized
+normalized_pixel_sum,PN2V,39891,0.915465,3.662685,0.453857,normalized
+normalized_pixel_sum,PPN2V,39891,1.196413,-0.801001,0.982784,normalized
+normalized_pixel_sum,DeepCAD-RT,39891,1.499084,-1.995677,0.854205,normalized

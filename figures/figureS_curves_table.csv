@@ -1,0 +1,12 @@
+model,family,epochs_run,selected_epoch,selection_rule,has_validation_curve
+λ = RL,RL,41,11,reward,True
+"λ = 0.5 (fixed), T = 5",RL,37,7,reward,False
+"λ = 0.5 (fixed), T = 1",RL,55,25,reward,False
+λ = 0.001 (T=1),static,116,86,val loss,True
+λ = 0.001 (T=3),static,135,105,val loss,True
+λ = 0.1 (T=1),static,182,152,val loss,True
+λ = 0.1 (T=3),static,150,120,val loss,True
+PN2V,comp,200,54,val loss,True
+PPN2V,comp,200,83,val loss,True
+N2V,comp,50,47,val loss,True
+DeepCAD-RT,comp,50,6,training loss,False

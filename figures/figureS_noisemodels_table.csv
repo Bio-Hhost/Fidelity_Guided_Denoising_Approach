@@ -1,0 +1,3 @@
+model,kind,bins,range_min,range_max,range_bounds,observed_pixels_outside,empty_signal_bins,populated_signal_min,populated_signal_max,bins_at_99pct_min,bins_at_99pct_median,density_drawn
+PN2V,histogram,128.0,117.0,800.0,both axes (signal and observation),49.0,20.0,138.51181102362204,735.4645669291339,1.0,40.0,True
+PPN2V,gaussian_mixture,,182.86309814453125,247.62057495117188,signal only; unbounded over observations,,,,,,,False

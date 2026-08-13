@@ -1,0 +1,127 @@
+domain,pair,metric,scale,short_T,long_T,short,long,delta,experiment
+simulated,$\lambda$ = 0.001,AUC,1.000000,T=1,T=3,0.096456,0.110633,0.014177,
+simulated,$\lambda$ = 0.001,AUC,2.000000,T=1,T=3,0.054937,0.052405,-0.002532,
+simulated,$\lambda$ = 0.001,AUC,3.000000,T=1,T=3,0.035696,0.028354,-0.007342,
+simulated,$\lambda$ = 0.001,AUC,4.000000,T=1,T=3,0.029620,0.017975,-0.011645,
+simulated,$\lambda$ = 0.001,AUC,5.000000,T=1,T=3,0.024051,0.012405,-0.011646,
+simulated,$\lambda$ = 0.001,AUC,6.000000,T=1,T=3,0.017722,0.009873,-0.007849,
+simulated,$\lambda$ = 0.001,AUC,7.000000,T=1,T=3,0.016203,0.006582,-0.009621,
+simulated,$\lambda$ = 0.001,AUC,8.000000,T=1,T=3,0.016203,0.004810,-0.011393,
+simulated,$\lambda$ = 0.001,AUC,9.000000,T=1,T=3,0.015443,0.003291,-0.012152,
+simulated,$\lambda$ = 0.001,AUC,10.000000,T=1,T=3,0.013165,0.003291,-0.009874,
+simulated,$\lambda$ = 0.001,F1,1.000000,T=1,T=3,0.302638,0.354121,0.051483,
+simulated,$\lambda$ = 0.001,F1,2.000000,T=1,T=3,0.196262,0.193614,-0.002648,
+simulated,$\lambda$ = 0.001,F1,3.000000,T=1,T=3,0.134900,0.109842,-0.025058,
+simulated,$\lambda$ = 0.001,F1,4.000000,T=1,T=3,0.103103,0.069621,-0.033482,
+simulated,$\lambda$ = 0.001,F1,5.000000,T=1,T=3,0.080912,0.042168,-0.038744,
+simulated,$\lambda$ = 0.001,F1,6.000000,T=1,T=3,0.074900,0.032580,-0.042320,
+simulated,$\lambda$ = 0.001,F1,7.000000,T=1,T=3,0.060678,0.025674,-0.035004,
+simulated,$\lambda$ = 0.001,F1,8.000000,T=1,T=3,0.048766,0.016924,-0.031842,
+simulated,$\lambda$ = 0.001,F1,9.000000,T=1,T=3,0.046825,0.014323,-0.032502,
+simulated,$\lambda$ = 0.001,F1,10.000000,T=1,T=3,0.045653,0.010510,-0.035143,
+simulated,$\lambda$ = 0.001,Loc_MedianAE,1.000000,T=1,T=3,0.278713,0.289332,0.010619,
+simulated,$\lambda$ = 0.001,Loc_MedianAE,2.000000,T=1,T=3,0.315186,0.311068,-0.004118,
+simulated,$\lambda$ = 0.001,Loc_MedianAE,3.000000,T=1,T=3,0.358041,0.344388,-0.013653,
+simulated,$\lambda$ = 0.001,Loc_MedianAE,4.000000,T=1,T=3,0.363109,0.354261,-0.008848,
+simulated,$\lambda$ = 0.001,Loc_MedianAE,5.000000,T=1,T=3,0.394864,0.361641,-0.033223,
+simulated,$\lambda$ = 0.001,Loc_MedianAE,6.000000,T=1,T=3,0.438571,0.382074,-0.056497,
+simulated,$\lambda$ = 0.001,Loc_MedianAE,7.000000,T=1,T=3,0.446653,0.381598,-0.065055,
+simulated,$\lambda$ = 0.001,Loc_MedianAE,8.000000,T=1,T=3,0.464320,0.464131,-0.000189,
+simulated,$\lambda$ = 0.001,Loc_MedianAE,9.000000,T=1,T=3,0.485833,0.413215,-0.072618,
+simulated,$\lambda$ = 0.001,Loc_MedianAE,10.000000,T=1,T=3,0.505815,0.399920,-0.105895,
+simulated,$\lambda$ = 0.1,AUC,1.000000,T=1,T=3,0.997621,0.997241,-0.000380,
+simulated,$\lambda$ = 0.1,AUC,2.000000,T=1,T=3,0.981944,0.981129,-0.000815,
+simulated,$\lambda$ = 0.1,AUC,3.000000,T=1,T=3,0.955325,0.956455,0.001130,
+simulated,$\lambda$ = 0.1,AUC,4.000000,T=1,T=3,0.914765,0.915413,0.000648,
+simulated,$\lambda$ = 0.1,AUC,5.000000,T=1,T=3,0.854680,0.853870,-0.000810,
+simulated,$\lambda$ = 0.1,AUC,6.000000,T=1,T=3,0.801024,0.807775,0.006751,
+simulated,$\lambda$ = 0.1,AUC,7.000000,T=1,T=3,0.725327,0.729562,0.004235,
+simulated,$\lambda$ = 0.1,AUC,8.000000,T=1,T=3,0.639687,0.641877,0.002190,
+simulated,$\lambda$ = 0.1,AUC,9.000000,T=1,T=3,0.557497,0.562919,0.005422,
+simulated,$\lambda$ = 0.1,AUC,10.000000,T=1,T=3,0.480676,0.483595,0.002919,
+simulated,$\lambda$ = 0.1,F1,1.000000,T=1,T=3,0.988145,0.988387,0.000242,
+simulated,$\lambda$ = 0.1,F1,2.000000,T=1,T=3,0.972848,0.972602,-0.000246,
+simulated,$\lambda$ = 0.1,F1,3.000000,T=1,T=3,0.914120,0.913039,-0.001081,
+simulated,$\lambda$ = 0.1,F1,4.000000,T=1,T=3,0.882394,0.883602,0.001208,
+simulated,$\lambda$ = 0.1,F1,5.000000,T=1,T=3,0.804578,0.806043,0.001465,
+simulated,$\lambda$ = 0.1,F1,6.000000,T=1,T=3,0.762141,0.762997,0.000856,
+simulated,$\lambda$ = 0.1,F1,7.000000,T=1,T=3,0.725012,0.727294,0.002282,
+simulated,$\lambda$ = 0.1,F1,8.000000,T=1,T=3,0.658605,0.660743,0.002138,
+simulated,$\lambda$ = 0.1,F1,9.000000,T=1,T=3,0.580071,0.588433,0.008362,
+simulated,$\lambda$ = 0.1,F1,10.000000,T=1,T=3,0.497030,0.505233,0.008203,
+simulated,$\lambda$ = 0.1,Loc_MedianAE,1.000000,T=1,T=3,0.305946,0.305897,-0.000049,
+simulated,$\lambda$ = 0.1,Loc_MedianAE,2.000000,T=1,T=3,0.340731,0.342711,0.001980,
+simulated,$\lambda$ = 0.1,Loc_MedianAE,3.000000,T=1,T=3,0.354861,0.356865,0.002004,
+simulated,$\lambda$ = 0.1,Loc_MedianAE,4.000000,T=1,T=3,0.383936,0.386192,0.002256,
+simulated,$\lambda$ = 0.1,Loc_MedianAE,5.000000,T=1,T=3,0.410703,0.408809,-0.001894,
+simulated,$\lambda$ = 0.1,Loc_MedianAE,6.000000,T=1,T=3,0.404087,0.402712,-0.001375,
+simulated,$\lambda$ = 0.1,Loc_MedianAE,7.000000,T=1,T=3,0.432683,0.433040,0.000357,
+simulated,$\lambda$ = 0.1,Loc_MedianAE,8.000000,T=1,T=3,0.455283,0.454812,-0.000471,
+simulated,$\lambda$ = 0.1,Loc_MedianAE,9.000000,T=1,T=3,0.475367,0.475098,-0.000269,
+simulated,$\lambda$ = 0.1,Loc_MedianAE,10.000000,T=1,T=3,0.498356,0.494345,-0.004011,
+simulated,frozen $\lambda$,AUC,1.000000,T=1,T=5,0.997532,0.996510,-0.001022,
+simulated,frozen $\lambda$,AUC,2.000000,T=1,T=5,0.985864,0.986373,0.000509,
+simulated,frozen $\lambda$,AUC,3.000000,T=1,T=5,0.965933,0.964641,-0.001292,
+simulated,frozen $\lambda$,AUC,4.000000,T=1,T=5,0.932506,0.932240,-0.000266,
+simulated,frozen $\lambda$,AUC,5.000000,T=1,T=5,0.881609,0.887339,0.005730,
+simulated,frozen $\lambda$,AUC,6.000000,T=1,T=5,0.836280,0.844958,0.008678,
+simulated,frozen $\lambda$,AUC,7.000000,T=1,T=5,0.786272,0.795387,0.009115,
+simulated,frozen $\lambda$,AUC,8.000000,T=1,T=5,0.721187,0.733495,0.012308,
+simulated,frozen $\lambda$,AUC,9.000000,T=1,T=5,0.653437,0.680836,0.027399,
+simulated,frozen $\lambda$,AUC,10.000000,T=1,T=5,0.575832,0.611692,0.035860,
+simulated,frozen $\lambda$,F1,1.000000,T=1,T=5,0.995876,0.994641,-0.001235,
+simulated,frozen $\lambda$,F1,2.000000,T=1,T=5,0.971885,0.965108,-0.006777,
+simulated,frozen $\lambda$,F1,3.000000,T=1,T=5,0.942624,0.943336,0.000712,
+simulated,frozen $\lambda$,F1,4.000000,T=1,T=5,0.868944,0.892350,0.023406,
+simulated,frozen $\lambda$,F1,5.000000,T=1,T=5,0.843035,0.829546,-0.013489,
+simulated,frozen $\lambda$,F1,6.000000,T=1,T=5,0.801362,0.805468,0.004106,
+simulated,frozen $\lambda$,F1,7.000000,T=1,T=5,0.728195,0.758054,0.029859,
+simulated,frozen $\lambda$,F1,8.000000,T=1,T=5,0.683901,0.685183,0.001282,
+simulated,frozen $\lambda$,F1,9.000000,T=1,T=5,0.654574,0.643824,-0.010750,
+simulated,frozen $\lambda$,F1,10.000000,T=1,T=5,0.623651,0.621403,-0.002248,
+simulated,frozen $\lambda$,Loc_MedianAE,1.000000,T=1,T=5,0.301450,0.300539,-0.000911,
+simulated,frozen $\lambda$,Loc_MedianAE,2.000000,T=1,T=5,0.333675,0.330434,-0.003241,
+simulated,frozen $\lambda$,Loc_MedianAE,3.000000,T=1,T=5,0.364414,0.358662,-0.005752,
+simulated,frozen $\lambda$,Loc_MedianAE,4.000000,T=1,T=5,0.367021,0.387561,0.020540,
+simulated,frozen $\lambda$,Loc_MedianAE,5.000000,T=1,T=5,0.388872,0.380864,-0.008008,
+simulated,frozen $\lambda$,Loc_MedianAE,6.000000,T=1,T=5,0.416139,0.404230,-0.011909,
+simulated,frozen $\lambda$,Loc_MedianAE,7.000000,T=1,T=5,0.442585,0.438509,-0.004076,
+simulated,frozen $\lambda$,Loc_MedianAE,8.000000,T=1,T=5,0.433128,0.456846,0.023718,
+simulated,frozen $\lambda$,Loc_MedianAE,9.000000,T=1,T=5,0.454281,0.439126,-0.015155,
+simulated,frozen $\lambda$,Loc_MedianAE,10.000000,T=1,T=5,0.455629,0.442822,-0.012807,
+experimental,$\lambda$ = 0.001,bg,,T=1,T=3,2.965200,2.965200,0.000000,19_Green
+experimental,$\lambda$ = 0.001,bg,,T=1,T=3,2.965200,1.482600,-1.482600,20_Green
+experimental,$\lambda$ = 0.001,bg,,T=1,T=3,4.447800,2.965200,-1.482600,29_Green
+experimental,$\lambda$ = 0.001,bg,,T=1,T=3,2.965200,1.482600,-1.482600,30_Green
+experimental,$\lambda$ = 0.001,loc,,T=1,T=3,0.707810,0.344267,-0.363543,19_Green
+experimental,$\lambda$ = 0.001,loc,,T=1,T=3,0.653363,0.324295,-0.329068,20_Green
+experimental,$\lambda$ = 0.001,loc,,T=1,T=3,0.733713,0.398812,-0.334901,29_Green
+experimental,$\lambda$ = 0.001,loc,,T=1,T=3,0.566767,0.272604,-0.294163,30_Green
+experimental,$\lambda$ = 0.001,phot,,T=1,T=3,373.683308,369.204426,-4.478883,19_Green
+experimental,$\lambda$ = 0.001,phot,,T=1,T=3,356.474213,352.144061,-4.330152,20_Green
+experimental,$\lambda$ = 0.001,phot,,T=1,T=3,457.851696,452.903158,-4.948538,29_Green
+experimental,$\lambda$ = 0.001,phot,,T=1,T=3,377.398549,371.926755,-5.471794,30_Green
+experimental,$\lambda$ = 0.1,bg,,T=1,T=3,63.010500,58.562700,-4.447800,19_Green
+experimental,$\lambda$ = 0.1,bg,,T=1,T=3,60.786600,55.597500,-5.189100,20_Green
+experimental,$\lambda$ = 0.1,bg,,T=1,T=3,83.766900,76.353900,-7.413000,29_Green
+experimental,$\lambda$ = 0.1,bg,,T=1,T=3,59.304000,54.856200,-4.447800,30_Green
+experimental,$\lambda$ = 0.1,loc,,T=1,T=3,0.196437,0.194930,-0.001507,19_Green
+experimental,$\lambda$ = 0.1,loc,,T=1,T=3,0.184886,0.182525,-0.002361,20_Green
+experimental,$\lambda$ = 0.1,loc,,T=1,T=3,0.264553,0.261204,-0.003349,29_Green
+experimental,$\lambda$ = 0.1,loc,,T=1,T=3,0.145343,0.147118,0.001776,30_Green
+experimental,$\lambda$ = 0.1,phot,,T=1,T=3,9.671925,14.144024,4.472099,19_Green
+experimental,$\lambda$ = 0.1,phot,,T=1,T=3,8.901061,13.611219,4.710158,20_Green
+experimental,$\lambda$ = 0.1,phot,,T=1,T=3,10.796744,25.105534,14.308791,29_Green
+experimental,$\lambda$ = 0.1,phot,,T=1,T=3,10.766126,12.723374,1.957248,30_Green
+experimental,frozen $\lambda$,bg,,T=1,T=5,45.960600,48.184500,2.223900,19_Green
+experimental,frozen $\lambda$,bg,,T=1,T=5,16.308600,17.791200,1.482600,20_Green
+experimental,frozen $\lambda$,bg,,T=1,T=5,69.682200,70.423500,0.741300,29_Green
+experimental,frozen $\lambda$,bg,,T=1,T=5,45.960600,47.443200,1.482600,30_Green
+experimental,frozen $\lambda$,loc,,T=1,T=5,0.194025,0.184566,-0.009459,19_Green
+experimental,frozen $\lambda$,loc,,T=1,T=5,0.179339,0.176937,-0.002402,20_Green
+experimental,frozen $\lambda$,loc,,T=1,T=5,0.251291,0.242945,-0.008346,29_Green
+experimental,frozen $\lambda$,loc,,T=1,T=5,0.148757,0.145634,-0.003123,30_Green
+experimental,frozen $\lambda$,phot,,T=1,T=5,13.878345,17.330994,3.452649,19_Green
+experimental,frozen $\lambda$,phot,,T=1,T=5,21.893519,24.678414,2.784895,20_Green
+experimental,frozen $\lambda$,phot,,T=1,T=5,16.058262,22.308824,6.250562,29_Green
+experimental,frozen $\lambda$,phot,,T=1,T=5,14.498039,16.806400,2.308361,30_Green
