@@ -12,7 +12,7 @@ This script generates a **pristine, noise-free** video based on spot locations a
 
 ### 2. Noise Application (`add_noise_to_gt.py`)
 
-This script corrupts the pristine ground truth video using the **mixed Poisson-Gaussian noise model** common to EMCCD/sCMOS cameras.
+This script corrupts the pristine ground truth video using the **mixed Poisson-Gaussian noise model**.
 
 $$y = \frac{\text{Poisson}(\alpha \cdot x_{gt})}{\alpha} + \mathcal{N}(0, \sigma^2)$$
 
