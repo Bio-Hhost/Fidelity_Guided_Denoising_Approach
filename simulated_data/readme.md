@@ -14,9 +14,12 @@ This script generates a **pristine, noise-free** video based on spot locations a
 
 This script corrupts the pristine ground truth video using the **mixed Poisson-Gaussian noise model**.
 
-$$y = \frac{\text{Poisson}(\alpha \cdot x_{gt})}{\alpha} + \mathcal{N}(0, \sigma^2)$$
+$$y = B + \alpha \cdot \text{Poisson}\left(\frac{\max(0, x_{gt}-B)}{\alpha}\right) + \mathcal{N}(0, s\sigma^2)$$
 
-It first analyzes the *original experimental video* to estimate the key noise parameters:
+The signal above background is converted to photons, subjected to the Poisson process and converted back to ADU, so the shot-noise variance is $\alpha\,(x_{gt}-B)$. $s$ is the noise scale set by `--scales`.
+
+It first analyzes the original experimental video to estimate the key noise parameters:
+* **Background Level ($B$):** The median over background regions free of detectable signal.
 * **Camera Gain ($\alpha$):** Estimated via Photon Transfer Curve (PTC) analysis (mean-variance plot).
 * **Readout Noise ($\sigma$):** Estimated from the standard deviation of background regions and the intercept of the PTC.
 
