@@ -1,43 +1,37 @@
-"""
-Runs a multi-variant detection threshold scan on simulated data.
+"""Detection threshold scan on simulated data (paper Sec 2.4.1).
 
-This script implements the quantitative evaluation described in
-Section 2.4.1 of the paper. It takes a ground truth (GT) spot list
-and a directory of corresponding videos (one noisy, many denoised)
-for each noise level ('scale').
+Sweeps a LoG detector across thresholds for every video in --input_dir, matches
+detections against the GT spot list, and writes per-threshold precision, recall and
+F1 plus PR curves for each noise scale.
 
-For each video, it:
-1. Samples a subset of frames for efficiency.
-2. Runs a Laplacian of Gaussian (LoG) blob detector
-   across a range of detection thresholds.
-3. Matches detections to the GT spots (TP, FP, FN).
-4. Calculates Precision, Recall, and F1-Score.
-
-At the end, it saves a CSV of all metrics and generates
-Precision-Recall (PR) curves and Metrics-vs-Threshold plots for
-each noise level group.
+The detection_metrics_all_variants.csv files it writes are the required input to
+evaluate_full.py, which reads the F1-optimal threshold from them.
 """
 
 import numpy as np
 import pandas as pd
 import tifffile
 import os
+import sys
 import time
-import math
 import matplotlib.pyplot as plt
 from scipy.spatial.distance import cdist
 from collections import defaultdict
 import traceback
 import glob
 import re
-import argparse # <<< Added
+import argparse
+
+# method labels and colours are shared with the figure scripts
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "figures"))
+from figure_style import style_for_data_type as get_method_style
 
 try:
     from skimage.feature import blob_log
 except ImportError:
     print("ERROR: scikit-image not found or feature module missing.")
     print("Please install it: pip install scikit-image")
-    exit()
+    sys.exit(1)
 try:
     from sklearn.metrics import precision_recall_curve, auc
 except ImportError:
@@ -49,44 +43,6 @@ except ImportError:
 
 print(f"Detection Threshold Scan Script Started: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-# This dictionary maps the exact display name to a unique color for plotting.
-# NOTE: If you use different denoising methods, you MUST update this dictionary and the `get_method_style` function below.
-ALL_COLORS = {
-    'Noisy': '#D55E00',             # Orange
-    'N2V': '#56B4E9',               # Sky Blue
-    'DeepCAD-RT': '#F0E442',         # Yellow
-    'λ = RL': '#E69F00',             # Amber
-    'λ = 0.001 (T=1)': '#0072B2',    # Blue
-    'λ = 0.1 (T=1)': '#009E73',      # Green
-    'λ = 0 (T=3)': '#CC79A7',        # Reddish Purple
-    'λ = 0.1 (T=3)': '#2F4F4F'       # Dark Slate Gray
-}
-
-def get_method_style(data_type_key):
-    key_lower = data_type_key.lower()
-
-    if 'n2v' in key_lower: return 'N2V', ALL_COLORS.get('N2V', '#888888')
-    if 'deepcad-rt' in key_lower: return 'DeepCAD-RT', ALL_COLORS.get('DeepCAD-RT', '#888888')
-    if 'training_run' in key_lower: return 'λ = RL', ALL_COLORS.get('λ = RL', '#888888')
-    if key_lower == 'noisy': return 'Noisy', ALL_COLORS.get('Noisy', '#888888')
-
-    seq_match = re.search(r'seq(\d+)', key_lower)
-    geo_match = re.search(r'geo(\d+\.?\d*)', key_lower) 
-    
-    t_val = seq_match.group(1) if seq_match else '1'
-    t_val_str = f"(T={t_val})"
-    
-    if geo_match:
-        lambda_val_str = geo_match.group(1)
-        name = f"λ = {lambda_val_str} {t_val_str}".strip()
-    elif seq_match: 
-        name = f"λ = 0 {t_val_str}".strip()
-    else: 
-        name = data_type_key
-
-    color = ALL_COLORS.get(name, '#999999') 
-            
-    return name, color
 
 def detect_spots_log(frame, min_sigma, max_sigma, num_sigma, threshold, overlap=0.5):
     try:
@@ -109,7 +65,7 @@ def run_log_detection_on_stack(stack, min_sigma, max_sigma, num_sigma, threshold
         original_frame_idx = frame_indices_map[f_idx] if frame_indices_map is not None else f_idx
         for x, y, r in detections_in_frame:
             all_detections.append({'frame': original_frame_idx, 'x_int': x, 'y_int': y, 'radius_est': r})
-    
+
     detections_df = pd.DataFrame(all_detections)
     required_cols = ['frame', 'x_int', 'y_int', 'radius_est']
     if detections_df.empty:
@@ -123,7 +79,7 @@ def run_log_detection_on_stack(stack, min_sigma, max_sigma, num_sigma, threshold
 def match_detections_to_gt(detections_df, gt_df, tolerance):
     all_matches = []
     detected_indices_matched = set()
-    
+
     if 'frame' not in detections_df.columns:
         detections_df['frame'] = []
     if 'y_int' not in detections_df.columns:
@@ -134,21 +90,21 @@ def match_detections_to_gt(detections_df, gt_df, tolerance):
     for frame_idx in gt_df['FRAME'].unique():
         gt_in_frame = gt_df[gt_df['FRAME'] == frame_idx]
         dets_in_frame = detections_df[detections_df['frame'] == frame_idx]
-        
+
         if gt_in_frame.empty and dets_in_frame.empty: continue
-        
+
         gt_coords = gt_in_frame[['POSITION_Y', 'POSITION_X']].values
         det_coords = dets_in_frame[['y_int', 'x_int']].values
-        
+
         frame_matches = []
-        
+
         if not gt_in_frame.empty and not dets_in_frame.empty:
             distances = cdist(gt_coords, det_coords)
             gt_indices, det_indices = np.where(distances <= tolerance)
-            
+
             match_candidates = sorted([(distances[gi, di], gt_in_frame.index[gi], dets_in_frame.index[di])
                                       for gi, di in zip(gt_indices, det_indices)])
-            
+
             assigned_gt, assigned_det = set(), set()
             for dist, gt_orig_idx, det_orig_idx in match_candidates:
                 if gt_orig_idx not in assigned_gt and det_orig_idx not in assigned_det:
@@ -164,7 +120,7 @@ def match_detections_to_gt(detections_df, gt_df, tolerance):
                     assigned_gt.add(gt_orig_idx)
                     assigned_det.add(det_orig_idx)
                     detected_indices_matched.add(det_orig_idx)
-        
+
         matched_gt_ids_in_frame = {m['GT_SPOT_ID'] for m in frame_matches}
         for gt_orig_idx in gt_in_frame.index:
             gt_s = gt_df.loc[gt_orig_idx]
@@ -177,7 +133,7 @@ def match_detections_to_gt(detections_df, gt_df, tolerance):
                     'distance': np.inf, 'match_status': 'FN',
                     'detection_index': -1
                 })
-        
+
         all_matches.extend(frame_matches)
 
     fp_df = pd.DataFrame()
@@ -195,25 +151,24 @@ def match_detections_to_gt(detections_df, gt_df, tolerance):
     for col in req_cols:
         if col not in matches_df.columns:
             matches_df[col] = np.nan if col != 'match_status' else 'Unknown'
-            
+
     return matches_df, fp_df
 
 def calculate_detection_metrics(matches_df, fp_df):
-    """Calculates TP, FP, FN, Precision, Recall, and F1."""
     tp = len(matches_df[matches_df['match_status'] == 'TP'])
     fn = len(matches_df[matches_df['match_status'] == 'FN'])
     fp = len(fp_df)
-    
+
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0
     f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-    
+
     return {'TP': tp, 'FP': fp, 'FN': fn, 'Precision': precision, 'Recall': recall, 'F1': f1}
 
 def plot_metrics_vs_threshold(results_df, filename, title_suffix):
     fig, axes = plt.subplots(3, 1, figsize=(12, 15), sharex=True)
     fig.suptitle(f"Detection Metrics vs. LoG Threshold\n{title_suffix}", fontsize=16)
-    
+
     data_types = results_df['data_type'].unique()
     if len(data_types) == 0:
         print("      Warning: No data found to plot metrics vs threshold.")
@@ -222,9 +177,9 @@ def plot_metrics_vs_threshold(results_df, filename, title_suffix):
     for data_type in sorted(data_types):
         df_subset = results_df[results_df['data_type'] == data_type].sort_values('threshold')
         if df_subset.empty: continue
-        
+
         display_name, color = get_method_style(data_type)
-        
+
         axes[0].plot(df_subset['threshold'], df_subset['Precision'], 'o-', label=display_name, color=color, alpha=0.8)
         axes[1].plot(df_subset['threshold'], df_subset['Recall'], 'o-', label=display_name, color=color, alpha=0.8)
         axes[2].plot(df_subset['threshold'], df_subset['F1'], 'o-', label=display_name, color=color, alpha=0.8)
@@ -232,13 +187,13 @@ def plot_metrics_vs_threshold(results_df, filename, title_suffix):
     axes[0].set_ylabel("Precision"); axes[0].set_ylim(0, 1.05); axes[0].grid(True, alpha=0.4)
     axes[1].set_ylabel("Recall (Sensitivity)"); axes[1].set_ylim(0, 1.05); axes[1].grid(True, alpha=0.4)
     axes[2].set_ylabel("F1 Score"); axes[2].set_xlabel("LoG Threshold"); axes[2].set_ylim(0, 1.05); axes[2].grid(True, alpha=0.4)
-    
+
     handles, labels = axes[0].get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
     fig.legend(by_label.values(), by_label.keys(), loc='upper right', bbox_to_anchor=(1.0, 0.95), title="Method")
-    
+
     plt.tight_layout(rect=[0, 0.03, 0.85, 0.95])
-    
+
     try:
         plt.savefig(filename, dpi=300); print(f"      Saved metrics vs threshold plot: {filename}")
     except Exception as e:
@@ -249,9 +204,9 @@ def plot_precision_recall_curve(results_df, filename, title_suffix):
     if auc is None:
         print("      Skipping PR curve plot: scikit-learn's auc function not found.")
         return
-    
+
     plt.figure(figsize=(10, 10))
-    
+
     data_types = results_df['data_type'].unique()
     if len(data_types) == 0:
         print("      Warning: No data found to plot PR curve.")
@@ -260,14 +215,14 @@ def plot_precision_recall_curve(results_df, filename, title_suffix):
     for data_type in sorted(data_types):
         df_subset = results_df[results_df['data_type'] == data_type]
         if df_subset.empty: continue
-        
+
         pr_auc_value = df_subset['AUC'].iloc[0] if 'AUC' in df_subset.columns and not df_subset['AUC'].empty else np.nan
         display_name, color = get_method_style(data_type)
-        
+
         df_sorted = df_subset.sort_values('Recall')
         recall_values = np.clip(df_sorted['Recall'].values, 0, 1)
         precision_values = np.clip(df_sorted['Precision'].values, 0, 1)
-        
+
         label_text = f'{display_name} (AUC = {pr_auc_value:.3f})' if not np.isnan(pr_auc_value) else f'{display_name} (AUC: N/A)'
         plt.plot(recall_values, precision_values, 'o-', label=label_text, color=color, alpha=0.8)
 
@@ -279,7 +234,7 @@ def plot_precision_recall_curve(results_df, filename, title_suffix):
     plt.xlim(-0.05, 1.05); plt.ylim(-0.05, 1.05)
     plt.gca().set_aspect('equal', adjustable='box')
     plt.tight_layout()
-    
+
     try:
         plt.savefig(filename, dpi=300); print(f"      Saved Precision-Recall curve plot: {filename}")
     except Exception as e:
@@ -289,7 +244,7 @@ def plot_precision_recall_curve(results_df, filename, title_suffix):
 def calculate_auc_for_df(df_subset):
     if df_subset.empty or auc is None or len(df_subset) < 2:
         return np.nan
-    
+
     df_sorted = df_subset.sort_values('threshold', ascending=False)
     recall_values = np.clip(df_sorted['Recall'].values, 0, 1)
     precision_values = np.clip(df_sorted['Precision'].values, 0, 1)
@@ -300,12 +255,12 @@ def calculate_auc_for_df(df_subset):
     sort_indices = np.lexsort((-precision_for_auc, recall_for_auc))
     recall_sorted = recall_for_auc[sort_indices]
     precision_sorted = precision_for_auc[sort_indices]
-    
+
     return auc(recall_sorted, precision_sorted)
 
 def main(args):
     overall_start_time = time.time()
-    
+
     LOG_PARAMS = {
         'min_sigma': args.min_sigma,
         'max_sigma': args.max_sigma,
@@ -324,7 +279,7 @@ def main(args):
             raise ValueError("GT Spots CSV missing required columns.")
         print(f"  Loaded GT Spots CSV: {len(gt_spots_df_global)} spots globally.")
     except Exception as e:
-        print(f"FATAL ERROR loading Ground Truth Spots CSV: {e}"); traceback.print_exc(); exit()
+        print(f"FATAL ERROR loading Ground Truth Spots CSV: {e}"); traceback.print_exc(); sys.exit(1)
 
     print(f"\nSearching for TIF files in: {args.input_dir}")
     print(f"Saving detection scan results to subdirectories within: {args.output_dir}")
@@ -335,7 +290,7 @@ def main(args):
     all_tif_files = [f for f in all_tif_files if "softmasked" not in os.path.basename(f)]
 
     if not all_tif_files:
-        print(f"\nERROR: No suitable .tif files found in {args.input_dir}."); exit()
+        print(f"\nERROR: No suitable .tif files found in {args.input_dir}."); sys.exit(1)
 
     noisy_files_map = {}
     denoised_files_dict = defaultdict(list)
@@ -367,14 +322,14 @@ def main(args):
         processed_groups_count += 1
         print(f"\n--- Processing Group {processed_groups_count}/{len(noisy_files_map)}: Scale {scale_str} ---")
         group_start_time = time.time()
-        
+
         all_group_results = []
-        
+
         try:
             print(f"  Analyzing source noisy file: {os.path.basename(noisy_video_path)}")
             if not os.path.exists(noisy_video_path):
                 raise FileNotFoundError("Noisy video not found")
-            
+
             noisy_stack_full = tifffile.imread(noisy_video_path)
             num_frames_total = noisy_stack_full.shape[0]
 
@@ -384,12 +339,12 @@ def main(args):
                 frame_indices.sort()
             else:
                 frame_indices = np.arange(num_frames_total)
-            
+
             noisy_stack_sampled = noisy_stack_full[frame_indices, :, :]
             gt_spots_df_sampled = gt_spots_df_global[gt_spots_df_global['FRAME'].isin(frame_indices)].copy()
-            
+
             print(f"    Loaded noisy video {noisy_stack_full.shape}, randomly sampled to {noisy_stack_sampled.shape} on {len(frame_indices)} frames.")
-            
+
             for i, thresh in enumerate(THRESHOLDS_TO_SCAN):
                 print(f"      Noisy Threshold {i+1}/{len(THRESHOLDS_TO_SCAN)}: {thresh:.4f}", end='\r')
                 detections_df = run_log_detection_on_stack(
@@ -405,19 +360,19 @@ def main(args):
             print(f"\n    FATAL ERROR processing noisy file {os.path.basename(noisy_video_path)}: {e}")
             traceback.print_exc()
             failed_items_list.append(f"{os.path.basename(noisy_video_path)} (Noisy file processing failed)")
-            continue 
+            continue
 
         if scale_str in denoised_files_dict:
             variants = denoised_files_dict[scale_str]
             print(f"  Analyzing {len(variants)} denoised variants...")
-            
+
             for variant_info in variants:
                 variant_path, variant_key = variant_info['path'], variant_info['key']
                 print(f"\n    Variant: {os.path.basename(variant_path)}")
                 try:
                     if not os.path.exists(variant_path):
                         raise FileNotFoundError("Denoised variant not found")
-                    
+
                     denoised_stack_full = tifffile.imread(variant_path)
                     denoised_stack_sampled = denoised_stack_full[frame_indices, :, :]
                     print(f"      Loaded variant {denoised_stack_full.shape}, sampled to {denoised_stack_sampled.shape}.")
@@ -428,7 +383,7 @@ def main(args):
                             denoised_stack_sampled, **LOG_PARAMS, threshold=thresh, frame_indices_map=frame_indices)
                         matches_df, fp_df = match_detections_to_gt(detections_df, gt_spots_df_sampled, args.tolerance)
                         metrics = calculate_detection_metrics(matches_df, fp_df)
-                        metrics['data_type'] = variant_key 
+                        metrics['data_type'] = variant_key
                         metrics['threshold'] = thresh
                         all_group_results.append(metrics)
                     print("\n        Variant scan complete.                        ")
@@ -448,10 +403,10 @@ def main(args):
 
         auc_series = group_results_df.groupby('data_type').apply(calculate_auc_for_df, include_groups=False)
         group_results_df['AUC'] = group_results_df['data_type'].map(auc_series)
-        
+
         output_dir = os.path.join(args.output_dir, f"Group_Scale_{scale_str}")
         os.makedirs(output_dir, exist_ok=True)
-        
+
         output_csv_path = os.path.join(output_dir, "detection_metrics_all_variants.csv")
         cols_order = ['data_type', 'threshold', 'TP', 'FP', 'FN', 'Precision', 'Recall', 'F1', 'AUC']
         for col in cols_order:
@@ -465,7 +420,7 @@ def main(args):
         plot_metrics_vs_threshold(group_results_df, mvt_plot_path, plot_title_suffix)
         pr_plot_path = os.path.join(output_dir, "precision_recall_curve_comparison.png")
         plot_precision_recall_curve(group_results_df, pr_plot_path, plot_title_suffix)
-        
+
         successful_groups_count += 1
         print(f"  Group processing finished in {time.time() - group_start_time:.2f} seconds.")
 
@@ -480,8 +435,7 @@ def main(args):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run detection performance evaluation on simulated data.")
-    
-    # --- I/O Arguments ---
+
     parser.add_argument("--gt_spots_csv", type=str, required=True,
                         help="Path to the ground truth CSV file (e.g., '..._spot_info.csv') generated by create_ground_truth.py.")
     parser.add_argument("--input_dir", type=str, required=True,
@@ -489,7 +443,6 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Path to the base directory where results (subfolders, CSVs, plots) will be saved.")
 
-    # --- Evaluation Parameters ---
     parser.add_argument("--tolerance", type=float, default=2.0,
                         help="Matching tolerance in pixels to count a detection as a True Positive.")
     parser.add_argument("--sample_frames", type=int, default=100,
@@ -497,7 +450,6 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducible frame sampling.")
 
-    # --- LoG Detector Parameters ---
     parser.add_argument("--min_sigma", type=float, default=1.5,
                         help="LoG detector: minimum sigma.")
     parser.add_argument("--max_sigma", type=float, default=3.0,
@@ -507,14 +459,13 @@ def parse_args():
     parser.add_argument("--overlap", type=float, default=0.5,
                         help="LoG detector: blob overlap threshold.")
 
-    # --- Threshold Scan Parameters ---
     parser.add_argument("--thresh_min", type=float, default=1.0,
                         help="Minimum LoG threshold to scan.")
     parser.add_argument("--thresh_max", type=float, default=100.0,
                         help="Maximum LoG threshold to scan.")
     parser.add_argument("--thresh_steps", type=int, default=20,
                         help="Number of threshold steps to scan.")
-    
+
     return parser.parse_args()
 
 
