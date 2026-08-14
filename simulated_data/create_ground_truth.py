@@ -1,3 +1,10 @@
+import sys
+
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 import cv2
 import numpy as np
 import pandas as pd
@@ -12,7 +19,7 @@ try:
 except ImportError:
     print("ERROR: scikit-image not found or skimage.draw module missing.")
     print("Please ensure scikit-image is installed correctly ('pip install scikit-image')")
-    exit()
+    sys.exit(1)
 import tifffile
 import os
 import time
@@ -21,7 +28,7 @@ import argparse
 
 print(f"Script started: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-# --- PSF Parameters (Airy focus) ---
+# PSF Parameters
 LAMBDA_EM = 0.571  # Emission wavelength in micrometers (µm)
 NA = 1.49          # Numerical Aperture of the objective
 N_MEDIUM = 1.33    # Refractive index of the sample medium (water/buffer)
@@ -227,6 +234,10 @@ def draw_psf_spot(canvas, x0, y0, amplitude_total,
 
 
 def main(args):
+    if getattr(args, 'seed', None) is not None:
+        np.random.seed(args.seed)
+        print(f"Seeded np.random with seed={args.seed} (reproducible GT generation).")
+
     print(f"Loading original video from: {args.video_in}")
     try:
         with tifffile.TiffFile(args.video_in) as tif:
@@ -239,18 +250,18 @@ def main(args):
         original_dtype = frames_original_stack.dtype
         print(f"Loaded {num_frames} frames. Dims: {height}x{width}, dtype={original_dtype}")
     except Exception as e:
-        print(f"Error loading original video: {e}"); exit()
+        print(f"Error loading original video: {e}"); sys.exit(1)
 
     print("\nEstimating background noise parameters...")
     if not args.noise_regions or len(args.noise_regions) % 4 != 0:
         print(f"ERROR: --noise_regions must be provided in multiples of 4 (x1 y1 x2 y2). Got: {args.noise_regions}")
-        exit()
+        sys.exit(1)
     noise_regions_parsed = [tuple(args.noise_regions[i:i+4]) for i in range(0, len(args.noise_regions), 4)]
     print(f"Using noise regions: {noise_regions_parsed}")
 
     background_level, _, background_std_dev = analyze_noise_regions(frames_original_stack, noise_regions_parsed, plot=False)
     if background_level is None or background_std_dev is None:
-        print("Error: Failed to estimate background parameters."); exit()
+        print("Error: Failed to estimate background parameters."); sys.exit(1)
 
     print(f"\nLoading spot data from: {args.spots_in}")
     try:
@@ -301,7 +312,7 @@ def main(args):
         globals()['amplitude_reference'] = amplitude_reference
         
     except Exception as e:
-        print(f"Error loading/cleaning spots CSV: {e}"); traceback.print_exc(); exit()
+        print(f"Error loading/cleaning spots CSV: {e}"); traceback.print_exc(); sys.exit(1)
 
     print(f"\nInitializing ground truth video with background level: {background_level:.2f}")
     gt_video = np.full((num_frames, height, width), background_level, dtype=np.float32)
@@ -467,7 +478,6 @@ def main(args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Generate pristine ground truth videos from real spot data.")
     
-    # --- I/O Arguments ---
     parser.add_argument("--video_in", type=str, required=True,
                         help="Path to the original experimental TIF video (e.g., 'Cy3_Best/Cy3 best SN 30ms per frame.tif')")
     parser.add_argument("--spots_in", type=str, required=True,
@@ -477,13 +487,11 @@ def parse_args():
     parser.add_argument("--spots_out", type=str, required=True,
                         help="Path to save the output CSV file with GT spot info (e.g., 'Cy3_Best/synthetic_gt_spots.csv')")
 
-    # --- Analysis Arguments ---
     parser.add_argument("--noise_regions", type=int, nargs='+', required=True,
                         help="List of noise region coordinates (x1 y1 x2 y2 x1 y1 x2 y2 ...)")
     parser.add_argument("--intensity_col", type=str, default="TOTAL_INTENSITY_CH1",
                         help="Name of the intensity column in the spots CSV file.")
 
-    # --- Simulation Arguments ---
     parser.add_argument("--intensity_scale", type=float, default=0.1,
                         help="Global scaling factor to apply to spot amplitudes (Paper Sec 2.2.2 mentions 0.1).")
     parser.add_argument("--kernel_size", type=int, default=17,
@@ -493,7 +501,6 @@ def parse_args():
     parser.add_argument("--diff_coeff", type=float, default=0.5,
                         help="Diffusion coefficient in um^2/s (for motion blur calc).")
     
-    # --- Brightness-Size Coupling Arguments ---
     parser.add_argument("--blur_sigma_base", type=float, default=0.9,
                         help="Baseline Gaussian blur sigma (pixels).")
     parser.add_argument("--blur_std_min", type=float, default=0.2,
@@ -506,6 +513,9 @@ def parse_args():
                         help="Scaling factor for brightness-dependent deterministic blur.")
     parser.add_argument("--blur_max_add", type=float, default=12.0,
                         help="Maximum additional sigma from deterministic blur.")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Seed for np.random at the start of main() (reproducibility; unset reproduces "
+                             "the legacy unseeded behavior — do NOT use to regenerate the existing v1 GT).")
 
     return parser.parse_args()
 

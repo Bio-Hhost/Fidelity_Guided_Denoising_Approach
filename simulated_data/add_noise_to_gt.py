@@ -7,6 +7,7 @@ from scipy.stats import norm
 from scipy.ndimage import gaussian_filter
 import tifffile
 import os
+import sys
 import time
 import argparse 
 from sklearn.linear_model import LinearRegression, TheilSenRegressor
@@ -190,6 +191,10 @@ def distort_gt(gt_stack, background_level, sigma=1.0):
     return distorted_gt.astype(np.float32)
 
 def main(args):
+    if getattr(args, 'seed', None) is not None:
+        np.random.seed(args.seed)
+        print(f"Seeded np.random with seed={args.seed} (reproducible noise generation).")
+
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
         print(f"Created base output directory: {args.output_dir}")
@@ -219,14 +224,14 @@ def main(args):
         num_frames, height, width = gt_video_stack_pristine.shape
         original_pixels_flat = original_stack.flatten()
     except Exception as e:
-        print(f"Error loading input files: {e}"); exit()
+        print(f"Error loading input files: {e}"); sys.exit(1)
 
     print("\n--- Estimating Noise Parameters from Original Video ---")
     gain_g = None; sigma_read = None; background_level = None; target_bg_std_orig = None
     
     if not args.noise_regions or len(args.noise_regions) % 4 != 0:
         print(f"ERROR: --noise_regions must be provided in multiples of 4 (x1 y1 x2 y2). Got: {args.noise_regions}")
-        exit()
+        sys.exit(1)
     noise_regions_parsed = [tuple(args.noise_regions[i:i+4]) for i in range(0, len(args.noise_regions), 4)]
     print(f"Using noise regions: {noise_regions_parsed}")
     
@@ -258,14 +263,14 @@ def main(args):
             print(f"Fallback: Using TotalStdDev={sigma_read:.2f} for Gaussian noise, disabling Poisson.")
             
     except Exception as e:
-        print(f"Fatal Error during noise parameter estimation: {e}"); exit()
+        print(f"Fatal Error during noise parameter estimation: {e}"); sys.exit(1)
 
     noise_normalized_residual = None
     if args.noise_model == 'norm_residual':
         print("\n--- Pre-calculating Normalized Residual Noise ---")
         if noise_stack_residual is None:
             print(f"Error: --noise_model is 'norm_residual' but --residual_noise_in was not provided or failed to load.")
-            exit()
+            sys.exit(1)
         try:
             print("Analyzing residual noise stats...")
             bg_lvl_resid, _, bg_std_residual = analyze_noise_regions(noise_stack_residual, noise_regions_parsed)
@@ -334,33 +339,36 @@ def main(args):
 
                 elif noise_model == 'gp_estimated':
                     print(f"      Model: Poisson-Gaussian (Estimated)")
-                    if gain_g < 1e-7 : 
+                    # v2: route both an invalid tiny gain AND the estimation-failure sentinel
+                    # (gain_g = 1e9, "disable Poisson") to the Gaussian-only branch. With the
+                    # corrected math, Poisson(signal/1e9)*1e9 would zero the signal.
+                    if (gain_g < 1e-7) or (gain_g >= 1e9):
                          print("      Using fallback: Applying scaled Gaussian noise only.")
                          current_gaussian_noise = np.random.normal(loc=0.0, scale=(sigma_read * noise_std_scaling), size=gt_video_to_use.shape).astype(np.float32)
                          final_noise = current_gaussian_noise
                          noise_desc = f"Fallback Gaussian (BaseStd={sigma_read:.2f} * {noise_std_scaling:.2f})"
                          simulated_float_stack = gt_video_to_use + final_noise
                     else:
-                         # 1. Scale the READOUT noise std dev
+                         #  Scale the READOUT noise std dev
                          scaled_sigma_read = sigma_read * noise_std_scaling
                          current_gaussian_noise = np.random.normal(loc=0.0, scale=scaled_sigma_read, size=gt_video_to_use.shape).astype(np.float32)
                          
-                         # 2. Apply Poisson shot noise
+                         # Apply Poisson shot noise
                          gt_non_negative = np.maximum(0, gt_video_to_use - background_level) # Signal above background
                          
-                         # Convert signal (ADU) to photons
-                         lambda_photons = gt_non_negative * gain_g
-                         
+                         # Convert signal (ADU) to photons: gain_g is ADU/photon, so DIVIDE  [v2 fix]
+                         lambda_photons = gt_non_negative / gain_g
+
                          # Poisson process
                          poisson_realization_photons = np.random.poisson(lam=lambda_photons).astype(np.float32)
-                         
-                         # Convert back to ADU (signal part)
-                         poisson_realization_adu = poisson_realization_photons / gain_g
-                         
-                         # 3. Combine: GT Background + Poisson Signal + Readout Noise
+
+                         # Convert photons back to ADU: MULTIPLY by gain_g  [v2 fix]  => Var_shot = gain_g * signal
+                         poisson_realization_adu = poisson_realization_photons * gain_g
+
+                         # Combine: GT Background + Poisson Signal + Readout Noise
                          simulated_float_stack = background_level + poisson_realization_adu + current_gaussian_noise
-                         
-                         noise_desc = f"G+P Est (g={gain_g:.3f}, ReadStd={sigma_read:.2f} * {noise_std_scaling:.2f})"
+
+                         noise_desc = f"G+P Est v2 (g={gain_g:.3f}, ReadStd={sigma_read:.2f} * {noise_std_scaling:.2f})"
 
                 elif noise_model == 'norm_residual':
                     print(f"      Model: Normalized Residual")
@@ -387,7 +395,9 @@ def main(args):
                     'Scenario': scenario_name, 'Scale': scale, 'GT_Type': gt_desc,
                     'Noise_Model': noise_desc, 'Output_Video': output_sim_video_path,
                     'Sim_BG_Median': sim_bg_lvl, 'Sim_BG_StdDev': sim_bg_std,
-                    'Orig_BG_Median': background_level, 'Orig_BG_StdDev': target_bg_std_orig
+                    'Orig_BG_Median': background_level, 'Orig_BG_StdDev': target_bg_std_orig,
+                    'Gain_ADU_per_photon': gain_g, 'ReadNoise_StdDev': sigma_read,
+                    'ReadNoise_Var': read_noise_variance, 'Seed': args.seed
                 })
 
                 print("      Generating histogram...")
@@ -415,6 +425,8 @@ def main(args):
             except Exception as e:
                 print(f"    ERROR processing scale {scale} for scenario {scenario_name}: {e}")
 
+    if not summary_data:
+        print("ERROR: no scales were generated successfully."); sys.exit(1)
     print("\n--- Saving Summary Statistics ---")
     try:
         summary_df = pd.DataFrame(summary_data)
@@ -429,7 +441,6 @@ def main(args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Apply noise models to a ground truth video.")
 
-    # --- I/O Arguments ---
     parser.add_argument("--gt_video_in", type=str, required=True,
                         help="Path to the input pristine ground truth TIF video (from create_ground_truth.py).")
     parser.add_argument("--original_video_in", type=str, required=True,
@@ -439,7 +450,6 @@ def parse_args():
     parser.add_argument("--residual_noise_in", type=str, default=None,
                         help="Path to the residual noise video (required for 'norm_residual' model).")
 
-    # --- Analysis Arguments ---
     parser.add_argument("--noise_regions", type=int, nargs='+', required=True,
                         help="List of noise region coordinates (x1 y1 x2 y2 ...) for noise analysis.")
     parser.add_argument("--patch_size", type=int, default=32,
@@ -449,7 +459,6 @@ def parse_args():
     parser.add_argument("--plot_frame_idx", type=int, default=0,
                         help="Index of the frame to use for visual/PSD comparison plots.")
 
-    # --- Scenario Arguments ---
     parser.add_argument("--scenario_name", type=str, default="Gauss_Poisson_Est",
                         help="Name for the simulation scenario (used for output folder).")
     parser.add_argument("--noise_model", type=str, default="gp_estimated",
@@ -462,11 +471,12 @@ def parse_args():
                         help="Apply a slight Gaussian blur to the GT video before adding noise.")
     parser.add_argument("--gt_distort_sigma", type=float, default=1.0,
                         help="Sigma for the GT distortion blur (if --distort_gt is used).")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Seed for np.random at the start of main() (reproducible noise generation).")
 
     return parser.parse_args()
 
 
 if __name__ == "__main__":
-    # Parse arguments and run main function
     args = parse_args()
     main(args)
