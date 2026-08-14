@@ -1,33 +1,29 @@
-"""
-Runs a full evaluation at optimal thresholds.
+"""Full evaluation at the F1-optimal detection threshold (paper Sec 2.4.1).
 
-This script implements the main quantitative analysis (Sec 2.4.1).
-It requires the output from the threshold scan ('evaluate_detection_threshold_scan.py').
+Requires evaluate_detection_threshold_scan.py to have run first: the optimal threshold
+per method and noise scale is read from its detection_metrics_all_variants.csv files
+under --threshold_scan_dir.
 
-Workflow:
-1. Scans the '--threshold_scan_dir' for all 'detection_metrics_all_variants.csv'
-   files created by 'evaluate_detection_threshold_scan.py'.
-2. Combines them into a single master DataFrame, adding 'scale' metadata.
-3. Saves this combined CSV (e.g., 'combined_threshold_scan_results.csv')
-   to the '--output_dir'.
-2. For each method and noise scale, it identifies the *optimal threshold*
-   (e.g., the one that maximized F1-Score).
-3. It re-loads the GT video and the simulated/denoised video (sampled).
-4. It re-runs the LoG detector *only at that optimal threshold*.
-5. It then performs a full analysis:
-   - Pixel-level metrics (PSNR, SSIM)
-   - Detection metrics (F1, Precision, Recall)
-   - 2D Gaussian fitting on all True Positives.
-   - Localization error (RMSE, MedianAE).
-   - Photometry error (R-squared, Gain, MedianAE).
-6. Saves a final summary CSV and plots for all metrics vs. noise.
+Reports pixel metrics (PSNR, SSIM), detection metrics at that threshold, and
+Gaussian-fit localization and photometry error over the true positives.
+
+--noise_params_csv opts into the noise-aware MLE localization arm; without it, fitting
+is least-squares only.
 """
 
+import sys
 import numpy as np
 import pandas as pd
 import tifffile
 import os
 import time
+
+# method names contain 'λ'; force UTF-8 so printing them doesn't crash on cp1252 consoles (Windows)
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from scipy.spatial.distance import cdist
@@ -36,37 +32,61 @@ from skimage.metrics import structural_similarity as ssim
 import traceback
 import glob
 import re
+from collections import defaultdict
 from pathlib import Path
 import argparse
+import seaborn as sns
+
+from mle_localization import make_mle_fitter
 
 try:
     from skimage.feature import blob_log
 except ImportError:
     print("ERROR: scikit-image not found or feature module missing.")
     print("Please install it: pip install scikit-image")
-    exit()
+    sys.exit(1)
 
 print(f"Comprehensive Evaluation Script Started: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-# --- Plotting Style Configuration (should be consistent with other scripts) ---
-ALL_COLORS = {
-    'Noisy': '#D55E00', 'N2V': '#56B4E9', 'DeepCAD-RT': '#F0E442',
-    'λ = RL': '#E69F00', 'λ = 0.001 (T=1)': '#0072B2', 'λ = 0.1 (T=1)': '#009E73',
-    'λ = 0 (T=3)': '#CC79A7', 'λ = 0.1 (T=3)': '#2F4F4F'
-}
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "figures"))
+from figure_style import style_for_data_type as get_method_style 
 
-def get_method_style(data_type_key):
-    key_lower = data_type_key.lower()
-    if 'n2v' in key_lower: return 'N2V', ALL_COLORS.get('N2V', '#888888')
-    if 'deepcad-rt' in key_lower: return 'DeepCAD-RT', ALL_COLORS.get('DeepCAD-RT', '#888888')
-    if 'training_run' in key_lower: return 'λ = RL', ALL_COLORS.get('λ = RL', '#888888')
-    if key_lower == 'noisy': return 'Noisy', ALL_COLORS.get('Noisy', '#888888')
-    seq_match = re.search(r'seq(\d+)', key_lower); geo_match = re.search(r'geo(\d+\.?\d*)', key_lower)
-    t_val = seq_match.group(1) if seq_match else '1'; t_val_str = f"(T={t_val})"
-    if geo_match: name = f"λ = {geo_match.group(1)} {t_val_str}".strip()
-    elif seq_match: name = f"λ = 0 {t_val_str}".strip()
-    else: name = data_type_key
-    return name, ALL_COLORS.get(name, '#999999')
+
+def _fit_arms(mle_fitter):
+    """Localization arms to run per video: LSQ always, MLE when a fitter is available.
+    Each entry is (fitter, data_type_suffix)."""
+    arms = [(fit_rotated_gaussian_2d, '')]
+    if mle_fitter is not None:
+        arms.append((mle_fitter, '_MLE'))
+    return arms
+
+
+def load_mle_noise_model(args):
+    if not args.noise_params_csv:
+        return None
+    row = pd.read_csv(args.noise_params_csv).iloc[0]
+    gain_g = float(row['gain_g']); read_var = float(row['read_noise_variance']); bg = float(row['background_level'])
+    print(f"[MLE] noise params from CSV: gain_g={gain_g:.4f}, read_noise_var={read_var:.2f}, bg={bg:.2f}")
+
+    if args.original_video and args.noise_regions:
+        sys.path.append(str(Path(__file__).resolve().parent.parent / "simulated_data"))
+        from add_noise_to_gt import analyze_noise_regions, analyze_intensity_variance_relationship
+        regions = [tuple(args.noise_regions[i:i + 4]) for i in range(0, len(args.noise_regions), 4)]
+        orig = tifffile.imread(args.original_video).astype(np.float32)
+        bg2, _, _ = analyze_noise_regions(orig, regions, plot=False)
+        gain2, read_var2 = analyze_intensity_variance_relationship(
+            orig, bg2, patch_size=args.patch_size, use_robust_regression=args.robust_regression, plot=False)
+        for label, a_val, b_val in [('gain_g', gain_g, gain2), ('read_noise_variance', read_var, read_var2),
+                                    ('background_level', bg, bg2)]:
+            rel = abs(a_val - b_val) / (abs(b_val) + 1e-9)
+            status = 'OK' if rel <= args.noise_param_tol else 'MISMATCH'
+            print(f"[MLE] cross-check {label}: csv={a_val:.4f} source={b_val:.4f} rel_diff={rel:.3f} [{status}]")
+            if rel > args.noise_param_tol:
+                raise SystemExit(f"FATAL: MLE noise param '{label}' from CSV disagrees with source-video "
+                                 f"re-estimate (rel_diff={rel:.3f} > tol={args.noise_param_tol}).")
+
+    # gain is ADU/photon (alpha); mle_localization uses Var = alpha*signal + read_var
+    return gain_g, read_var, bg
 
 
 def zoom_spot_loc(video_frame, spot_position, region_size):
@@ -190,7 +210,6 @@ def combine_results_to_master_df(base_dir, output_file):
     for path in all_csv_paths:
         try:
             df = pd.read_csv(path)
-            # Extract scale from the directory name, e.g., "Group_Scale_1.0"
             scale_str = os.path.basename(os.path.dirname(path)).replace('Group_Scale_', '')
             df['scale'] = float(scale_str)
             all_dfs.append(df)
@@ -227,43 +246,52 @@ def get_optimal_threshold(summary_df, scale_value, data_type_key, default_thresh
         print(f"        ERROR looking up threshold for '{data_type_key}' (Scale {scale_value:.2f}): {e}. Using default: {default_thresh}")
         return default_thresh
 
-def evaluate_video(video_stack, gt_spots_df, frame_indices_map, threshold, name, **kwargs):
-    print(f"    Evaluating: {name}...")
-    
+def detect_and_match(video_stack, gt_spots_df, frame_indices_map, threshold, name, **kwargs):
+    """LoG detection + GT matching only (independent of the localization fitter)."""
+    print(f"    Detecting: {name}...")
     detections = []
     for i, frame in enumerate(video_stack):
         original_frame_idx = frame_indices_map[i]
         for x, y, r in detect_spots_log(frame, kwargs['min_sigma'], kwargs['max_sigma'], kwargs['num_sigma'], threshold, kwargs['blob_overlap']):
             detections.append({'frame': original_frame_idx, 'x_int': x, 'y_int': y})
     detections_df = pd.DataFrame(detections)
-
     matches_df, fp_df = match_detections_to_gt(detections_df, gt_spots_df, kwargs['match_tolerance'])
-    
+    return matches_df, fp_df
+
+
+def fit_matches(video_stack, gt_spots_df, matches_df, frame_indices_map, fitter, fit_region_size):
     detailed_results = []
-    border = kwargs['fit_region_size'] // 2 + 1
+    border = fit_region_size // 2 + 1
     gt_spots_for_fitting = gt_spots_df[(gt_spots_df['POSITION_X'] >= border) & (gt_spots_df['POSITION_X'] < video_stack.shape[2] - border) &
                                        (gt_spots_df['POSITION_Y'] >= border) & (gt_spots_df['POSITION_Y'] < video_stack.shape[1] - border)]
 
     for _, gt_spot in gt_spots_for_fitting.iterrows():
         gt_id, frame_idx = gt_spot['GT_SPOT_ID'], int(gt_spot['FRAME'])
         result_entry = {'GT_SPOT_ID': gt_id, 'frame': frame_idx, 'GT_X': gt_spot['POSITION_X'], 'GT_Y': gt_spot['POSITION_Y'], 'GT_Amplitude': gt_spot['GT_AMPLITUDE_DRAWN']}
-        
+
         try:
             sampled_frame_idx = np.where(frame_indices_map == frame_idx)[0][0]
         except IndexError:
-            continue 
-        
+            continue
+
         match = matches_df[(matches_df['GT_SPOT_ID'] == gt_id) & (matches_df['match_status'] == 'TP')]
-        
+
         if not match.empty:
             det_x, det_y = match.iloc[0]['det_x_int'], match.iloc[0]['det_y_int']
-            patch, (gx1, gy1) = zoom_spot_loc(video_stack[sampled_frame_idx], (det_x, det_y), kwargs['fit_region_size'])
-            success, params = fit_rotated_gaussian_2d(patch, gx1, gy1)
+            patch, (gx1, gy1) = zoom_spot_loc(video_stack[sampled_frame_idx], (det_x, det_y), fit_region_size)
+            success, params = fitter(patch, gx1, gy1)
             if success:
                 result_entry.update(params)
         detailed_results.append(result_entry)
-        
-    detailed_results_df = pd.DataFrame(detailed_results)
+
+    return pd.DataFrame(detailed_results)
+
+
+def evaluate_video(video_stack, gt_spots_df, frame_indices_map, threshold, name,
+                   fitter=fit_rotated_gaussian_2d, **kwargs):
+    print(f"    Evaluating: {name}...")
+    matches_df, fp_df = detect_and_match(video_stack, gt_spots_df, frame_indices_map, threshold, name, **kwargs)
+    detailed_results_df = fit_matches(video_stack, gt_spots_df, matches_df, frame_indices_map, fitter, kwargs['fit_region_size'])
     return matches_df, fp_df, detailed_results_df
 
 def calculate_summary_metrics(matches_df, fp_df, detailed_results_df, gt_stack, video_stack):
@@ -359,8 +387,8 @@ def main(args):
     gt_spots_csv_path = Path(args.gt_spots_csv)
     input_data_dir = Path(args.input_dir)
     base_output_dir = Path(args.output_dir)
-    optimal_threshold_summary_path = Path(args.threshold_summary_csv)
-    
+    threshold_scan_dir = Path(args.threshold_scan_dir)
+
     METHODS_TO_EVALUATE = args.methods if args.methods else []
     NUM_FRAMES_TO_SAMPLE = args.sample_frames
     RANDOM_SEED = args.seed
@@ -391,11 +419,11 @@ def main(args):
     
     if optimal_thresholds_df is None:
         print(f"FATAL ERROR: Failed to combine threshold scan CSVs from '{threshold_scan_dir}'. Cannot proceed.")
-        exit()
+        sys.exit(1)
         
     print(f"Successfully combined threshold results into: {combined_csv_path}")
 
-    print(f"\n--- Step 2: Running Comprehensive Evaluation ---") 
+    print(f"\n--- Step 2: Running Comprehensive Evaluation ---")
     print(f"\nSearching for TIF files in: {input_data_dir}")
     all_tif_files = [p for p in input_data_dir.glob("*.tif") if "softmasked" not in p.name]
     scale_pattern = re.compile(r"scale_(\d+\.\d+)|sim_(\d+\.\d+)")
@@ -408,13 +436,22 @@ def main(args):
             file_groups[scale_str].append(f_path)
 
     print(f"Found {len(file_groups)} noise scale groups to process.")
-    
+
+    mle_model = load_mle_noise_model(args)
+    if mle_model is not None:
+        print(f"[MLE] enabled -> K={mle_model[0]:.4f}, base_read_var={mle_model[1]:.2f}, bg={mle_model[2]:.2f}")
+
     all_evaluation_results = []
     
     for scale_str, file_paths in file_groups.items():
         scale_val = float(scale_str)
         print(f"\n--- Processing Group: Scale {scale_val:.2f} ---")
-        
+
+        mle_fitter = None
+        if mle_model is not None:
+            K, base_read_var, bg = mle_model
+            mle_fitter = make_mle_fitter(K, base_read_var * scale_val, bg)
+
         noisy_path = next((p for p in file_paths if f"sim_Gauss_Poisson_Est_scale_{scale_str}" in p.name), None)
         if not noisy_path:
             print(f"  WARNING: Noisy base file not found for scale {scale_str}. Skipping group.")
@@ -444,10 +481,14 @@ def main(args):
             print(f"  FATAL ERROR loading base data for scale {scale_str}: {e}"); continue
             
         thresh_noisy = get_optimal_threshold(optimal_thresholds_df, scale_val, 'noisy', DEFAULT_THRESHOLD, OPTIMIZATION_METRIC)
-        matches_n, fp_n, details_n = evaluate_video(noisy_stack, gt_spots_df, frame_indices, thresh_noisy, "Noisy", **LOG_PARAMS, **FIT_PARAMS)
-        metrics_n = calculate_summary_metrics(matches_n, fp_n, details_n, gt_stack, noisy_stack)
-        metrics_n.update({'scale': scale_val, 'Method': 'Noisy', 'Color': ALL_COLORS['Noisy'], 'data_type': 'noisy'})
-        all_evaluation_results.append(metrics_n)
+        matches_n, fp_n = detect_and_match(noisy_stack, gt_spots_df, frame_indices, thresh_noisy, "Noisy", **LOG_PARAMS, **FIT_PARAMS)
+        for arm_fitter, arm_suffix in _fit_arms(mle_fitter):
+            details_n = fit_matches(noisy_stack, gt_spots_df, matches_n, frame_indices, arm_fitter, FIT_PARAMS['fit_region_size'])
+            metrics_n = calculate_summary_metrics(matches_n, fp_n, details_n, gt_stack, noisy_stack)
+            dtype_n = 'noisy' + arm_suffix
+            name_n, color_n = get_method_style(dtype_n)
+            metrics_n.update({'scale': scale_val, 'Method': name_n, 'Color': color_n, 'data_type': dtype_n})
+            all_evaluation_results.append(metrics_n)
 
         for d_path in denoised_paths:
             data_type_key = d_path.name
@@ -459,10 +500,14 @@ def main(args):
             try:
                 denoised_stack = tifffile.imread(d_path)[frame_indices]
                 thresh_d = get_optimal_threshold(optimal_thresholds_df, scale_val, data_type_key, DEFAULT_THRESHOLD, OPTIMIZATION_METRIC)
-                matches_d, fp_d, details_d = evaluate_video(denoised_stack, gt_spots_df, frame_indices, thresh_d, method_name, **LOG_PARAMS, **FIT_PARAMS)
-                metrics_d = calculate_summary_metrics(matches_d, fp_d, details_d, gt_stack, denoised_stack)
-                metrics_d.update({'scale': scale_val, 'Method': method_name, 'Color': color, 'data_type': data_type_key})
-                all_evaluation_results.append(metrics_d)
+                matches_d, fp_d = detect_and_match(denoised_stack, gt_spots_df, frame_indices, thresh_d, method_name, **LOG_PARAMS, **FIT_PARAMS)
+                for arm_fitter, arm_suffix in _fit_arms(mle_fitter):
+                    details_d = fit_matches(denoised_stack, gt_spots_df, matches_d, frame_indices, arm_fitter, FIT_PARAMS['fit_region_size'])
+                    metrics_d = calculate_summary_metrics(matches_d, fp_d, details_d, gt_stack, denoised_stack)
+                    dtype_d = data_type_key + arm_suffix
+                    name_d, color_d = get_method_style(dtype_d)
+                    metrics_d.update({'scale': scale_val, 'Method': name_d, 'Color': color_d, 'data_type': dtype_d})
+                    all_evaluation_results.append(metrics_d)
             except Exception as e:
                 print(f"  ERROR processing variant {d_path.name}: {e}")
 
@@ -483,7 +528,6 @@ def main(args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Run comprehensive evaluation at optimal thresholds.")
     
-    # --- I/O Arguments ---
     parser.add_argument("--gt_video", type=str, required=True,
                         help="Path to the *pristine* ground truth TIF video.")
     parser.add_argument("--gt_spots_csv", type=str, required=True,
@@ -493,13 +537,11 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Path to the base directory where comprehensive results (CSVs, plots) will be saved.")
     parser.add_argument("--threshold_scan_dir", type=str, required=True,
-                           help="Path to the base directory containing the 'Group_Scale_...' folders from the 'evaluate_detection_threshold_scan.py' scan.")
+                        help="Path to the base directory containing the 'Group_Scale_...' folders from the 'evaluate_detection_threshold_scan.py' scan.")
 
-    # --- Filtering ---
     parser.add_argument("--methods", type=str, nargs='+', default=None,
                         help="Optional: List of method display names to evaluate (e.g., 'N2V' 'DeepCAD-RT'). If empty, evaluates all.")
 
-    # --- Evaluation Parameters ---
     parser.add_argument("--sample_frames", type=int, default=500,
                         help="Number of frames to randomly sample from each video.")
     parser.add_argument("--seed", type=int, default=42,
@@ -513,12 +555,29 @@ def parse_args():
     parser.add_argument("--default_thresh", type=float, default=10.0,
                         help="Fallback threshold if a method is not found in the summary CSV.")
 
-    # --- LoG Detector Parameters (used for the optimal threshold run) ---
+    # LoG Detector Parameters (used for the optimal threshold run)
     parser.add_argument("--min_sigma", type=float, default=1.5, help="LoG detector: minimum sigma.")
     parser.add_argument("--max_sigma", type=float, default=3.0, help="LoG detector: maximum sigma.")
     parser.add_argument("--num_sigma", type=int, default=10, help="LoG detector: number of sigma steps.")
     parser.add_argument("--overlap", type=float, default=0.5, help="LoG detector: blob overlap threshold.")
-    
+
+    # Noise-aware MLE localization arms 
+    parser.add_argument("--noise_params_csv", type=str, default=None,
+                        help="CSV with columns gain_g, read_noise_variance, background_level "
+                             "(from estimate_noise_params.py). Providing it enables the MLE localization arms.")
+    parser.add_argument("--original_video", type=str, default=None,
+                        help="Optional: original experimental video to re-estimate the noise model and "
+                             "cross-check it against --noise_params_csv.")
+    parser.add_argument("--noise_regions", type=int, nargs='+', default=None,
+                        help="Background noise-region coords 'x1 y1 x2 y2 ...' (same as add_noise_to_gt.py); "
+                             "used only for the cross-check.")
+    parser.add_argument("--patch_size", type=int, default=32,
+                        help="PTC patch size for the cross-check gain estimation (match add_noise_to_gt.py).")
+    parser.add_argument("--robust_regression", action='store_true',
+                        help="Use Theil-Sen for the cross-check gain estimation (match add_noise_to_gt.py).")
+    parser.add_argument("--noise_param_tol", type=float, default=0.05,
+                        help="Max relative difference between CSV and re-estimated noise params before aborting.")
+
     return parser.parse_args()
 
 

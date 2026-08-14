@@ -1,28 +1,11 @@
-"""
-Runs the full evaluation pipeline for EXPERIMENTAL data.
+"""Evaluation on experimental data, where no ground truth exists (paper Sec 2.4.2).
 
-This script implements the quantitative analysis described in Sec 2.4.2
-of the paper. It is a single, integrated script that performs both
-analysis and plotting.
+TrackMate spot positions are the reference. For every denoised variant found beside the
+raw stack under --base_dir, a 2D Gaussian is fitted at each reference coordinate on both
+the raw and the denoised frame, and local background is measured in an annulus around the
+spot. Writes per-spot metrics per variant plus a pooled summary.
 
-Workflow:
-1.  Iterates through all experiment folders in the '--base_dir'.
-2.  For each experiment, it loads the original noisy .tif video and the
-    corresponding TrackMate _spots.csv file.
-3.  It finds all 'denoised.tif' variants in the same folder.
-4.  For each denoised variant, it iterates through the TrackMate spots.
-5.  For each spot, it performs a 2D Gaussian fit on both the noisy
-    and denoised video at the reference coordinate.
-6.  It calculates local background statistics (mean, std dev) using
-    an adaptive annulus, as described in the paper.
-7.  It saves a detailed CSV file of these per-spot metrics for the variant.
-8.  (Optional) It saves visualization images for a subset of spots.
-9.  After all experiments and variants are processed, it combines all
-    results into a single master DataFrame.
-10. It calculates summary metrics (median local noise, median local
-    brightness, median localization error, median photometry error).
-11. It generates and saves the final summary bar plots comparing all
-    methods across all experiments.
+Method identity comes from figures/figure_style.py.
 """
 
 import numpy as np
@@ -50,17 +33,6 @@ except ImportError:
 
 print(f"Experimental Data Evaluation & Plotting Script Started: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-# Mapping keywords in filenames to a clean display name
-METHOD_MAP = {
-    'noisy': 'Noisy', 'geo0.001': 'λ = 0.001 (T=1)', 'geo0.1': 'λ = 0.1 (T=1)',
-    'training_run': 'λ = RL', 'n2v': 'N2V',
-    'deepcad-rt': 'DeepCAD-RT', 
-    # Add other mappings if needed, e.g., 'geo0.1_seq3': 'λ = 0.1 (T=3)'
-    # 'geo0.001_seq1': 'λ = 0.001 (T=1)', 'geo0.1_seq1': 'λ = 0.1 (T=1)',
-    # 'geo0.001_seq3': 'λ = 0.001 (T=3)', 'geo0.1_seq3': 'λ = 0.1 (T=3)'
-}
-
-# Defining the colors for each method
 ALL_COLORS = {
     'Noisy': '#D55E00',             # Orange
     'N2V': '#56B4E9',               # Sky Blue
@@ -68,17 +40,25 @@ ALL_COLORS = {
     'λ = RL': '#E69F00',             # Amber
     'λ = 0.001 (T=1)': '#0072B2',    # Blue
     'λ = 0.1 (T=1)': '#009E73',      # Green
-    # 'λ = 0 (T=3)': '#CC79A7',        # Reddish Purple
-    # 'λ = 0.1 (T=3)': '#2F4F4F',      # Dark Slate Gray
-    # 'λ = 0.001 (T=3)': '#0072B2',    # Blue (re-use)
+    'PN2V': '#CC79A7',               # Reddish Purple
+    'PPN2V': '#999999',              # Gray
 }
 
+import sys as _sys
+
+# stdout carries lambda (U+03BB); a default Windows console is cp1252 and would raise
+for _s in (_sys.stdout, _sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+_sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "figures"))
+from figure_style import resolve_label as _resolve_label, METHOD_ORDER
+
+
 def get_variant_display_name_from_filename(path):
-    name = Path(path).name.lower()
-    for keyword, display_name in sorted(METHOD_MAP.items(), key=lambda x: len(x[0]), reverse=True):
-        if keyword in name:
-            return display_name
-    return 'Other'
+    return _resolve_label(Path(path).name)
 
 def rotated_2d_gaussian(coords, amplitude, x0, y0, sigma_x, sigma_y, theta_deg, offset):
     (x, y) = coords; theta = np.deg2rad(theta_deg)
@@ -284,7 +264,12 @@ def process_spot(spot_tuple, original_stack, denoised_stack, exp_folder_name, da
     if not success_d and not success_n:
         return None
 
-    base_params_for_radius = params_d if success_d else params_n
+    if getattr(args, "raw_derived_radii", False):
+        if not success_n:
+            return None          # no raw fit => no method-independent annulus for this spot
+        base_params_for_radius = params_n
+    else:
+        base_params_for_radius = params_d if success_d else params_n
     if args.adaptive_radii:
         effective_radius = np.clip(np.sqrt(base_params_for_radius['fit_sx'] * base_params_for_radius['fit_sy']), 0.5, 5.0)
         inner_rad = (args.adapt_inner_mult * effective_radius) + args.adapt_inner_base
@@ -295,13 +280,11 @@ def process_spot(spot_tuple, original_stack, denoised_stack, exp_folder_name, da
     result_entry['bg_outer_radius_used'] = outer_rad
 
     
-    # 1. Local Background Std Dev (Noise)
     bg_mean_local_n, bg_std_local_n = analyze_local_background(frame_noisy, (ref_x, ref_y), inner_rad, outer_rad)
     result_entry.update({'noisy_local_bg_mean': bg_mean_local_n, 'noisy_local_bg_std': bg_std_local_n})
     bg_mean_local_d, bg_std_local_d = analyze_local_background(frame_denoised, (ref_x, ref_y), inner_rad, outer_rad)
     result_entry.update({'denoised_local_bg_mean': bg_mean_local_d, 'denoised_local_bg_std': bg_std_local_d})
 
-    # (Localization Error and Photometry Error are calculated in the main plotting part)
 
     if args.save_visuals and spot_idx < args.spots_to_visualize:
         vis_filename_base = f"{exp_folder_name}_{variant_name}_frame{frame_idx}_spot{spot_idx}"
@@ -427,7 +410,6 @@ def main(args):
         return
 
     print("Calculating localization and photometry errors...")
-    # 1. Localization Error
     loc_cols = ['denoised_fit_x', 'POSITION_X', 'denoised_fit_y', 'POSITION_Y']
     for col in loc_cols:
         master_df[col] = pd.to_numeric(master_df[col], errors='coerce')
@@ -437,7 +419,6 @@ def main(args):
         (valid_loc_rows['denoised_fit_y'] - valid_loc_rows['POSITION_Y'])**2
     )
     
-    # 2. Photometry Error
     phot_cols = ['denoised_fit_amplitude', 'noisy_fit_amplitude']
     for col in phot_cols:
         master_df[col] = pd.to_numeric(master_df[col], errors='coerce')
@@ -453,6 +434,20 @@ def main(args):
     summary_df = master_df.groupby(['experiment', 'variant_display_name'])[metric_cols].median().reset_index()
     summary_df.columns = ['experiment', 'variant_display_name'] + [f"{col}_median" for col in metric_cols]
 
+    summary_df.to_csv(output_dir / "summary_median_by_experiment_variant.csv", index=False)
+    print(f"  Saved per-experiment summary to: summary_median_by_experiment_variant.csv")
+
+    pooled_med = master_df.groupby('variant_display_name')[metric_cols].median()
+    pooled_mean = master_df.groupby('variant_display_name')[metric_cols].mean()
+    pooled_med.columns = [f"{c}_median" for c in metric_cols]
+    pooled_mean.columns = [f"{c}_mean" for c in metric_cols]
+    pooled_df = pd.concat([pooled_med, pooled_mean], axis=1).reset_index()
+    pooled_df.to_csv(output_dir / "summary_pooled_by_variant.csv", index=False)
+    print(f"  Saved pooled-across-experiments summary to: summary_pooled_by_variant.csv")
+    print("\n===== POOLED ACROSS-EXPERIMENT SUMMARY (per variant) =====")
+    print(pooled_df.to_string(index=False))
+    print("==========================================================\n")
+
     plot_data_list = []
     noisy_summary = summary_df.groupby('experiment')[['noisy_local_bg_std_median', 'noisy_local_bg_mean_median']].first().reset_index()
     for _, row in noisy_summary.iterrows():
@@ -467,11 +462,16 @@ def main(args):
 
     print("\nGenerating and saving plots...")
     
-    denoised_hue_order = [method for method in args.methods if method in ALL_COLORS]
+    if args.methods:
+        _order = list(args.methods)
+    else:
+        _present = set(summary_df['variant_display_name'].unique())
+        _order = [m for m in METHOD_ORDER if m in _present]
+        _order += sorted(_present - set(_order))
+    denoised_hue_order = [m for m in _order if m in ALL_COLORS and m != 'Noisy']
     all_hue_order = ['Noisy'] + denoised_hue_order
     fixed_color_map = {k: v for k, v in ALL_COLORS.items() if k in all_hue_order}
 
-    # Plots 1-2: Background Std and Mean
     for metric, title, ylabel in [
         ('Local Background Std Dev (Noise)', 'Local Background Noise Reduction', 'Median Local Background Std Dev'),
         ('Local Background Mean (Brightness)', 'Local Background Mean Preservation', 'Median Local Background Mean'),
@@ -489,7 +489,6 @@ def main(args):
         plt.close()
         print(f"  Saved plot: {title.lower().replace(' ', '_')}.png")
 
-    # Plot 3: Localization Error
     if 'localization_error_median' in summary_df.columns:
         plt.figure(figsize=(16, 8))
         sns.barplot(data=summary_df, x='experiment', y='localization_error_median', hue='variant_display_name', hue_order=denoised_hue_order, palette=fixed_color_map)
@@ -503,7 +502,6 @@ def main(args):
         plt.close()
         print("  Saved plot: median_localization_error.png")
 
-    # Plot 4: Photometry Error (Newly Added)
     if 'photometry_error_median' in summary_df.columns:
         plt.figure(figsize=(16, 8))
         sns.barplot(data=summary_df, x='experiment', y='photometry_error_median', hue='variant_display_name', hue_order=denoised_hue_order, palette=fixed_color_map)
@@ -522,26 +520,27 @@ def main(args):
 def parse_args():
     parser = argparse.ArgumentParser(description="Run full evaluation pipeline on experimental data.")
     
-    # --- I/O Paths ---
     parser.add_argument("--base_dir", type=str, required=True,
                         help="The base directory containing all experimental data folders (e.g., '.../exp_data3').")
     parser.add_argument("--output_dir_name", type=str, default="Experimental_Evaluation_Results",
                         help="Name of the subfolder to create within --base_dir to save all results and plots.")
     
-    # --- Method Filtering ---
-    parser.add_argument("--methods", type=str, nargs='+',
-                        default=['λ = 0.001 (T=1)', 'λ = 0.1 (T=1)', 'λ = RL', 'N2V', 'DeepCAD-RT'],
-                        help=f"List of method display names to process and plot. Default: 'λ = 0.001 (T=1)', 'λ = 0.1 (T=1)', etc. Available: {list(METHOD_MAP.values())}")
+    parser.add_argument("--methods", type=str, nargs='+', default=None,
+                        help="Method display names to process. Default: all variants found. "
+                             "Names must match figures/figure_style.py labels.")
     parser.add_argument("--exclude_training_data", action="store_true",
                         help="If set, excludes the 'Cy3_Best' experiment from the final plots.")
                         
-    # --- Analysis Parameters ---
     parser.add_argument("--spots_to_process", type=int, default=None,
                         help="Number of spots to sample from each experiment. Default: None (process all spots).")
     parser.add_argument("--fit_region_size", type=int, default=7,
                         help="Pixel size of the square region for 2D Gaussian fitting (must be odd).")
     
-    # --- Background Annulus Parameters ---
+    parser.add_argument("--raw_derived_radii", action="store_true",
+                        help="Derive the background annulus from the fit to the RAW stack "
+                             "instead of the denoised one, making the annulus -- and the "
+                             "noisy control -- method-independent by construction. Combine "
+                             "with --adaptive_radii to keep the adaptive sizing rule.")
     parser.add_argument("--adaptive_radii", action="store_true",
                         help="Use adaptive radii for background annulus (as per paper).")
     parser.add_argument("--fixed_inner_radius", type=float, default=2.0,
@@ -557,7 +556,6 @@ def parse_args():
     parser.add_argument("--adapt_outer_base", type=float, default=2.0,
                         help="Adaptive outer radius base (sigma * mult + base).")
     
-     --- Visualization Parameters ---
     parser.add_argument("--save_visuals", action="store_true",
                         help="Save visualization images for a subset of spots.")
     parser.add_argument("--spots_to_visualize", type=int, default=5,

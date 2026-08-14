@@ -11,52 +11,17 @@ It then generates a single line plot summarizing the performance (AUC) of all me
 import pandas as pd
 import glob
 import os
+import sys
 import matplotlib.pyplot as plt
 import seaborn as sns
 import re
-import argparse # <<< Added
+import argparse
 
 print("Starting AUC summary generation for all denoising variants...")
 
-# NOTE: This dictionary and the function below must be kept
-# in sync with 'evaluate_detection_threshold_scan.py' for consistent plotting.
-ALL_COLORS = {
-    'Noisy': '#D55E00',             # Orange
-    'N2V': '#56B4E9',               # Sky Blue
-    'DeepCAD-RT': '#F0E442',         # Yellow
-    'λ = RL': '#E69F00',             # Amber
-    'λ = 0.001 (T=1)': '#0072B2',    # Blue
-    'λ = 0.1 (T=1)': '#009E73',      # Green
-    'λ = 0 (T=3)': '#CC79A7',        # Reddish Purple
-    'λ = 0.1 (T=3)': '#2F4F4F'       # Dark Slate Gray
-}
-
-
-def get_method_style(data_type_key):
-    key_lower = data_type_key.lower()
-
-    if 'n2v' in key_lower: return 'N2V', ALL_COLORS.get('N2V', '#888888')
-    if 'deepcad-rt' in key_lower: return 'DeepCAD-RT', ALL_COLORS.get('DeepCAD-RT', '#888888')
-    if 'training_run' in key_lower: return 'λ = RL', ALL_COLORS.get('λ = RL', '#888888')
-    if key_lower == 'noisy': return 'Noisy', ALL_COLORS.get('Noisy', '#888888')
-
-    seq_match = re.search(r'seq(\d+)', key_lower)
-    geo_match = re.search(r'geo(\d+\.?\d*)', key_lower)
-    
-    t_val = seq_match.group(1) if seq_match else '1'
-    t_val_str = f"(T={t_val})"
-    
-    if geo_match:
-        lambda_val_str = geo_match.group(1)
-        name = f"λ = {lambda_val_str} {t_val_str}".strip()
-    elif seq_match: 
-        name = f"λ = 0 {t_val_str}".strip()
-    else: 
-        name = data_type_key
-
-    color = ALL_COLORS.get(name, '#999999') 
-            
-    return name, color
+import sys as _sys
+_sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "figures"))
+from figure_style import style_for_data_type as get_method_style
 
 def main(args):
     search_pattern = os.path.join(args.input_dir, '**', 'detection_metrics_all_variants.csv')
@@ -64,7 +29,7 @@ def main(args):
 
     if not result_files:
         print(f"Error: No 'detection_metrics_all_variants.csv' files found in {args.input_dir}.")
-        exit()
+        sys.exit(1)
 
     print(f"Found {len(result_files)} result files to summarize.")
 
@@ -98,7 +63,7 @@ def main(args):
 
     if not summary_data:
         print("Error: No valid data could be extracted from the result files.")
-        exit()
+        sys.exit(1)
 
     summary_df = pd.DataFrame(summary_data)
 
