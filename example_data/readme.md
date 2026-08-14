@@ -8,7 +8,7 @@ A small, self-contained example for running both denoising inference pipelines e
 
 The **RL demo runs straight from a clone** — its weights ship in `rl_demo_run/models/`, alongside a demo-specific `config.json` whose background regions are the four 128 px corners rather than the full-frame regions of the real run.
 
-The **static model is not here in the repo**: at 62 MB it is over GitHub's upload limit. Download it from the Zenodo record (see `<MODEL_DOWNLOAD_LINK>`) and place it at:
+The **static model is not here in the repo**: at 62 MB it is over GitHub's upload limit. Download it from the Zenodo record (see `10.5281/zenodo.21925651`) and place it at:
 
 ```
 example_data/static_models/unet_static_seq1_lambda0.001.keras
