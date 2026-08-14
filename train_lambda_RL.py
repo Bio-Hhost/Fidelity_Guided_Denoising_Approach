@@ -17,6 +17,7 @@ from scipy.stats import norm
 import argparse
 from pathlib import Path
 import time, subprocess, platform
+import csv
 
 def analyze_noise_regions(frames, noise_regions):
     noise_pixels = []
@@ -64,7 +65,6 @@ def zoom_spot_loc(video_frame, spot_position, region_size):
     return region, (x1_clipped, y1_clipped)
 
 def rotated_2d_gaussian(coords, amplitude, x0, y0, sigma_x, sigma_y, theta_deg, offset):
-    """Defines a 2D Gaussian function with rotation."""
     (x, y) = coords
     theta = np.deg2rad(theta_deg)
     X_centered, Y_centered = x - x0, y - y0
@@ -109,7 +109,7 @@ def find_csv_header(config):
                 print(f"Found CSV header at line {i}")
                 return i
     print("Warning: Could not find CSV header. Defaulting to row 0.")
-    return 0 
+    return 0
 
 def process_spot_data(df, config):
     cols_to_convert = [
@@ -132,7 +132,7 @@ def estimate_noise_parameters(all_frames, regions):
     background_level, gaussian_variance = analyze_noise_regions(all_frames, regions)
     gain_estimate = analyze_intensity_variance_relationship(all_frames, background_level)
     return {'gain': gain_estimate, 'sigma_sq': gaussian_variance, 'background_level': background_level}
-    
+
 def pad_video_sequence(frames, sequence_length):
     pad_size = sequence_length // 2
     if pad_size == 0:
@@ -142,9 +142,9 @@ def pad_video_sequence(frames, sequence_length):
     return padded_frames, pad_size
 
 def create_data_generators(all_padded_frames, spots_map, config, pad_size):
-    num_frames = len(all_padded_frames) - 2 * pad_size   # original frame count
+    num_frames = len(all_padded_frames) - 2 * pad_size
     indices = np.arange(num_frames)
-    np.random.shuffle(indices)                            # random train/val split
+    np.random.shuffle(indices)
     split_idx = int(num_frames * config.data_split['train'])
     train_indices, val_indices = indices[:split_idx], indices[split_idx:]
     train_generator = RLDataGenerator(
@@ -170,7 +170,7 @@ class RLDataGenerator(tf.keras.utils.Sequence):
         self.h, self.w = self.all_padded_frames[0].shape
         self.center_offset = self.sequence_length // 2
         self.original_frame_indices = frame_indices
-        self.indices = self.original_frame_indices   # alias used by the debug-image helper
+        self.indices = self.original_frame_indices
         self.on_epoch_end()
 
     def __len__(self):
@@ -216,9 +216,9 @@ def calculate_composite_reward(X_center_batch_tf, y_pred_batch_tf, trackmate_spo
     X_np = X_center_batch_tf.numpy()
     y_pred_np = y_pred_batch_tf.numpy()
 
-    if X_np.ndim == 2: 
+    if X_np.ndim == 2:
          X_np = np.expand_dims(X_np, axis=0)
-    if y_pred_np.ndim == 3: 
+    if y_pred_np.ndim == 3:
         y_pred_np = np.expand_dims(y_pred_np, axis=0)
 
     y_pred_np = y_pred_np.squeeze(axis=-1)
@@ -266,7 +266,7 @@ def calculate_composite_reward(X_center_batch_tf, y_pred_batch_tf, trackmate_spo
             if bg_pixels.size > 1:
                 local_bg_std = np.std(bg_pixels)
             else:
-                local_bg_std = 1e-6 # Assign a small, non-zero value if mask is empty
+                local_bg_std = 1e-6
 
             snr = params_denoised['fit_amplitude'] / (local_bg_std + 1e-7)
             reward_snr = np.tanh(snr / 10.0)
@@ -373,7 +373,7 @@ class CriticNetwork(Model):
         self.state_fc1 = layers.Dense(256, activation='relu')
         self.concat = layers.Concatenate()
         self.combined_fc1 = layers.Dense(256, activation='relu')
-        self.q_out = layers.Dense(1) 
+        self.q_out = layers.Dense(1)
     def call(self, states, actions):
         state_features = self.state_fc1(states)
         x = self.concat([state_features, actions])
@@ -441,20 +441,22 @@ def calculate_unet_loss_manual(y_true, y_pred, mask, lambda_geo, noise_params):
 
 def create_rl_state_for_batch(X_center_batch_tf, trackmate_spots_batch, config):
     batch_states = []
-    X_np = X_center_batch_tf.numpy().squeeze()
+    X_np = X_center_batch_tf.numpy()
+    if X_np.ndim == 4:                      # (B, H, W, 1) -> (B, H, W)
+        X_np = X_np.squeeze(axis=-1)        # never squeeze the batch axis
     for i in range(X_np.shape[0]):
         frame_np, spots_df = X_np[i], trackmate_spots_batch[i]
         num_tm_spots = 0.0
         median_tm_snr = 0.0
         median_tm_quality = 0.0
-        
+
         if spots_df is not None and not spots_df.empty:
             num_tm_spots = len(spots_df)
             if config.csv_snr_col in spots_df.columns:
                 median_tm_snr = spots_df[config.csv_snr_col].median()
             if config.csv_quality_col in spots_df.columns:
                 median_tm_quality = spots_df[config.csv_quality_col].median()
-                
+
         state_features = [
             np.median(frame_np),
             np.std(frame_np),
@@ -464,7 +466,7 @@ def create_rl_state_for_batch(X_center_batch_tf, trackmate_spots_batch, config):
         ]
         batch_states.append(state_features)
     return tf.convert_to_tensor(np.array(batch_states), dtype=tf.float32)
-    
+
 
 def generate_debug_images(unet, data_generator, epoch, output_dir):
     try:
@@ -512,17 +514,24 @@ def main(args):
         _, all_frames = cv2.imreadmulti(args.tiff_path, flags=cv2.IMREAD_UNCHANGED)
         all_frames = np.array(all_frames, dtype=np.float32)
         print(f"Loaded {len(all_frames)} frames from {args.tiff_path}")
-        
+
         all_spots_df = pd.read_csv(args.spots_csv_path, header=find_csv_header(args))
         trackmate_spots_by_frame = process_spot_data(all_spots_df, args)
         print(f"Processed {len(all_spots_df)} spots for {len(trackmate_spots_by_frame)} frames.")
-        
+
         print("\nEstimating noise parameters...")
         NOISE_PARAMS = estimate_noise_parameters(all_frames, args.noise_analysis_regions)
         print(f"Estimated Noise Params: {NOISE_PARAMS}")
+        _ov = {"gain": args.gain_estimate, "sigma_sq": args.gaussian_variance,
+               "background_level": args.background_level}
+        for _k, _v in _ov.items():
+            if _v is not None:
+                print(f"  OVERRIDE {_k}: {NOISE_PARAMS[_k]:.4f} -> {_v:.4f}  (from CLI)")
+                NOISE_PARAMS[_k] = _v
+        print(f"Noise Params IN USE: {NOISE_PARAMS}")
         padded_frames, pad_size = pad_video_sequence(all_frames, args.sequence_length)
         padded_frames -= NOISE_PARAMS['background_level']
-        
+
     except Exception as e:
         print(f"ERROR during data loading or noise estimation. Details: {e}"); return
 
@@ -534,6 +543,38 @@ def main(args):
     ddpg_agent = DDPGAgent(args, NOISE_PARAMS)
     unet_optimizer = optimizers.Adam(learning_rate=args.unet_lr)
     print("U-Net and DDPG Agent initialized.")
+
+    LAMBDA_TRACE_PATH = os.path.join(OUTPUT_DIR, "lambda_trace.csv")
+    _lam_cols = (["phase", "epoch", "step", "sample",
+                  "lambda_used", "lambda_actor", "noise_std", "at_bound",
+                  "reward_abs", "reward_pre", "reward_rl"]
+                 + [f"s{i}" for i in range(args.state_dim)])
+    with open(LAMBDA_TRACE_PATH, "w", newline="") as _f:
+        csv.writer(_f).writerow(_lam_cols)
+    _lam_rows = []
+
+    def _log_lambda(phase, epoch, step, lam_used, lam_actor, noise_std,
+                    states, r_abs, r_pre, r_rl):
+        lam_used = np.asarray(lam_used).reshape(-1)
+        lam_act = (np.asarray(lam_actor).reshape(-1) if lam_actor is not None
+                   else np.full_like(lam_used, np.nan))
+        r_pre = (np.asarray(r_pre).reshape(-1) if r_pre is not None
+                 else np.full_like(lam_used, np.nan))
+        st, r_abs, r_rl = np.asarray(states), np.asarray(r_abs).reshape(-1), np.asarray(r_rl).reshape(-1)
+        lo, hi = args.lambda_geo_bounds
+        for i in range(lam_used.shape[0]):
+            at_bound = int(lam_used[i] <= lo + 1e-6 or lam_used[i] >= hi - 1e-6)
+            _lam_rows.append([phase, epoch, step, i,
+                              float(lam_used[i]), float(lam_act[i]),
+                              float(noise_std) if noise_std is not None else float("nan"),
+                              at_bound, float(r_abs[i]), float(r_pre[i]), float(r_rl[i])]
+                             + [float(v) for v in st[i]])
+
+    def _flush_lambda():
+        if _lam_rows:
+            with open(LAMBDA_TRACE_PATH, "a", newline="") as _f:
+                csv.writer(_f).writerows(_lam_rows)
+            del _lam_rows[:]
 
     print("\n--- Starting RL Warm-up Phase ---")
     _train_t0 = time.perf_counter()
@@ -553,12 +594,22 @@ def main(args):
             unet_grads_clipped, _ = tf.clip_by_global_norm(unet_grads, 1.0)
             unet_optimizer.apply_gradients(zip(unet_grads_clipped, unet_model.trainable_variables))
 
-            rewards_tf, _ = calculate_composite_reward(tf.constant(X_center_b, dtype=tf.float32), y_pred_b, tm_list_b, args)
-            
+            r_pre_tf = None
+            if args.reward_mode == "delta":
+                r_pre_tf, _ = calculate_composite_reward(tf.constant(X_center_b, dtype=tf.float32), y_pred_b, tm_list_b, args)
+            y_pred_post = unet_model(X_seq_b, training=False)
+            rewards_tf, _ = calculate_composite_reward(tf.constant(X_center_b, dtype=tf.float32), y_pred_post, tm_list_b, args)
+            rl_rewards_tf = (rewards_tf - r_pre_tf) if args.reward_mode == "delta" else rewards_tf
+
             if previous_rl_states_numpy is not None and previous_rl_states_numpy.shape[0] == current_rl_states_tf.shape[0]:
                 for i in range(len(previous_rl_states_numpy)):
                     ddpg_agent.record_experience(previous_rl_states_numpy[i], previous_actions_numpy[i], previous_rewards_numpy[i], current_rl_states_tf[i].numpy(), False)
-            previous_rl_states_numpy, previous_actions_numpy, previous_rewards_numpy = current_rl_states_tf.numpy(), random_actions.numpy(), rewards_tf.numpy()
+            previous_rl_states_numpy, previous_actions_numpy, previous_rewards_numpy = current_rl_states_tf.numpy(), random_actions.numpy(), rl_rewards_tf.numpy()
+
+            _log_lambda("warmup", epoch, step, random_actions.numpy(), None, None,
+                        current_rl_states_tf.numpy(), rewards_tf.numpy(),
+                        r_pre_tf.numpy() if r_pre_tf is not None else None, rl_rewards_tf.numpy())
+        _flush_lambda()
         print(f"Replay buffer size after warm-up epoch: {len(ddpg_agent.replay_buffer)}")
 
     print("\n--- Starting DDPG + U-Net Training ---")
@@ -568,30 +619,41 @@ def main(args):
 
     for epoch in range(args.total_epochs):
         print(f"\nEpoch {epoch+1}/{args.total_epochs}")
-        metrics = {k: tf.keras.metrics.Mean() for k in ['unet_loss', 'reward', 'actor_loss', 'critic_loss', 'actor_grad', 'critic_grad', 'unet_grad', 'mean_lambda']}
+        metrics = {k: tf.keras.metrics.Mean() for k in ['unet_loss', 'reward', 'reward_rl', 'actor_loss', 'critic_loss',
+                                                        'actor_grad', 'critic_grad', 'unet_grad',
+                                                        'mean_lambda', 'lambda_actor', 'lambda_batch_std']}
         current_noise_stddev = ddpg_agent.action_noise_stddev * (args.noise_decay ** epoch)
 
         for step in range(args.steps_per_epoch):
             X_seq_b, (Y_true_b, Y_mask_b), tm_list_b, X_center_b = train_generator[step % len(train_generator)]
             current_rl_states_tf = create_rl_state_for_batch(tf.constant(X_center_b, dtype=tf.float32), tm_list_b, args)
-            
+
             actions_deterministic = ddpg_agent.actor(current_rl_states_tf, training=False)
             noise = tf.random.normal(shape=actions_deterministic.shape, stddev=current_noise_stddev)
             actions_noisy = tf.clip_by_value(actions_deterministic + noise, *args.lambda_geo_bounds)
-            
+
             with tf.GradientTape() as unet_tape:
                 y_pred_b = unet_model(X_seq_b, training=True)
                 unet_loss = calculate_unet_loss_manual(Y_true_b, y_pred_b, Y_mask_b, actions_noisy, NOISE_PARAMS)
             unet_grads = unet_tape.gradient(unet_loss, unet_model.trainable_variables)
             unet_grads_clipped, unet_grad_norm = tf.clip_by_global_norm(unet_grads, 1.0)
             unet_optimizer.apply_gradients(zip(unet_grads_clipped, unet_model.trainable_variables))
-            
-            rewards_tf, _ = calculate_composite_reward(tf.constant(X_center_b, dtype=tf.float32), y_pred_b, tm_list_b, args)
-            
+
+            r_pre_tf = None
+            if args.reward_mode == "delta":
+                r_pre_tf, _ = calculate_composite_reward(tf.constant(X_center_b, dtype=tf.float32), y_pred_b, tm_list_b, args)
+            y_pred_post = unet_model(X_seq_b, training=False)
+            rewards_tf, _ = calculate_composite_reward(tf.constant(X_center_b, dtype=tf.float32), y_pred_post, tm_list_b, args)
+            rl_rewards_tf = (rewards_tf - r_pre_tf) if args.reward_mode == "delta" else rewards_tf
+
             if previous_rl_states_numpy is not None and previous_rl_states_numpy.shape[0] == current_rl_states_tf.shape[0]:
                 for i in range(len(previous_rl_states_numpy)):
                     ddpg_agent.record_experience(previous_rl_states_numpy[i], previous_actions_numpy[i], previous_rewards_numpy[i], current_rl_states_tf[i].numpy(), False)
-            previous_rl_states_numpy, previous_actions_numpy, previous_rewards_numpy = current_rl_states_tf.numpy(), actions_noisy.numpy(), rewards_tf.numpy()
+            previous_rl_states_numpy, previous_actions_numpy, previous_rewards_numpy = current_rl_states_tf.numpy(), actions_noisy.numpy(), rl_rewards_tf.numpy()
+
+            _log_lambda("train", epoch, step, actions_noisy.numpy(), actions_deterministic.numpy(),
+                        current_noise_stddev, current_rl_states_tf.numpy(), rewards_tf.numpy(),
+                        r_pre_tf.numpy() if r_pre_tf is not None else None, rl_rewards_tf.numpy())
 
             learn_results = None
             if len(ddpg_agent.replay_buffer) > args.rl_batch_size:
@@ -599,16 +661,40 @@ def main(args):
                     learn_results = ddpg_agent.learn()
 
             metrics['unet_loss'].update_state(unet_loss); metrics['unet_grad'].update_state(unet_grad_norm); metrics['reward'].update_state(tf.reduce_mean(rewards_tf)); metrics['mean_lambda'].update_state(tf.reduce_mean(actions_noisy))
+            metrics['reward_rl'].update_state(tf.reduce_mean(rl_rewards_tf))
+            metrics['lambda_actor'].update_state(tf.reduce_mean(actions_deterministic))
+            metrics['lambda_batch_std'].update_state(tf.math.reduce_std(actions_deterministic))
             if learn_results and all(res is not None for res in learn_results):
                 actor_loss, critic_loss, actor_grad, critic_grad = learn_results
                 metrics['actor_loss'].update_state(actor_loss); metrics['critic_loss'].update_state(critic_loss); metrics['actor_grad'].update_state(actor_grad); metrics['critic_grad'].update_state(critic_grad)
 
         log_entry = {name: meter.result().numpy() for name, meter in metrics.items()}
+
+        _val_rewards = []
+        for _vb in range(len(val_generator)):
+            _Xs, (_Yt, _Ym), _tml, _Xc = val_generator[_vb]
+            _yp = unet_model(_Xs, training=False)
+            _r, _ = calculate_composite_reward(tf.constant(_Xc, dtype=tf.float32), _yp, _tml, args)
+            _val_rewards.append(float(tf.reduce_mean(_r)))
+        log_entry['val_reward'] = float(np.mean(_val_rewards)) if _val_rewards else float('nan')
+
         print(f"End of Epoch {epoch+1} -> " + ", ".join([f"{k}: {v:.4f}" for k, v in log_entry.items()]))
         history.append(log_entry)
-        
+        _flush_lambda()
+
+        # every epoch is kept (~22 MB) so checkpoint selection can be made post-hoc
+        _ep_dir = os.path.join(MODELS_DIR, "epochs"); os.makedirs(_ep_dir, exist_ok=True)
+        _tag = f"{epoch+1:04d}"
+        unet_model.save_weights(os.path.join(_ep_dir, f"unet_{_tag}.weights.h5"))
+        ddpg_agent.actor.save_weights(os.path.join(_ep_dir, f"actor_{_tag}.weights.h5"))
+        if ddpg_agent.critic.built:
+            ddpg_agent.critic.save_weights(os.path.join(_ep_dir, f"critic_{_tag}.weights.h5"))
+
+        # rewritten each epoch rather than once at the end: these runs are long and unrepeatable
+        pd.DataFrame(history).to_csv(os.path.join(OUTPUT_DIR, "training_history.csv"), index_label="epoch")
+
         generate_debug_images(unet_model, val_generator, epoch, OUTPUT_DIR)
-        
+
         current_epoch_reward = log_entry['reward']
         if current_epoch_reward > best_val_reward:
             print(f"New best reward: {current_epoch_reward:.4f} (previously {best_val_reward:.4f}). Saving best models.")
@@ -616,11 +702,12 @@ def main(args):
             epochs_without_improvement = 0
             unet_model.save_weights(os.path.join(MODELS_DIR, "unet_best.weights.h5"))
             ddpg_agent.actor.save_weights(os.path.join(MODELS_DIR, "actor_best.weights.h5"))
-            ddpg_agent.critic.save_weights(os.path.join(MODELS_DIR, "critic_best.weights.h5"))
+            if ddpg_agent.critic.built:
+                ddpg_agent.critic.save_weights(os.path.join(MODELS_DIR, "critic_best.weights.h5"))
         else:
             epochs_without_improvement += 1
             print(f"No improvement in reward for {epochs_without_improvement} epoch(s). Best was {best_val_reward:.4f}.")
-        
+
         if epochs_without_improvement > 0 and epochs_without_improvement % args.lr_scheduler_patience == 0:
             current_lr = unet_optimizer.learning_rate.numpy()
             if current_lr > args.min_lr:
@@ -629,7 +716,7 @@ def main(args):
                 ddpg_agent.critic_optimizer.learning_rate.assign(new_lr)
                 unet_optimizer.learning_rate.assign(new_lr)
                 print(f"Reduced learning rate to {new_lr:.7f}.")
-        
+
         if epochs_without_improvement >= args.early_stopping_patience:
             print(f"Stopping training early after {epochs_without_improvement} epochs without improvement.")
             break
@@ -638,36 +725,51 @@ def main(args):
     print("Saving final models and training history...")
     unet_model.save(os.path.join(MODELS_DIR, "unet_final.keras"))
     ddpg_agent.actor.save_weights(os.path.join(MODELS_DIR, "actor_final.weights.h5"))
-    ddpg_agent.critic.save_weights(os.path.join(MODELS_DIR, "critic_final.weights.h5"))
+    if ddpg_agent.critic.built:
+        ddpg_agent.critic.save_weights(os.path.join(MODELS_DIR, "critic_final.weights.h5"))
 
     history_df = pd.DataFrame(history)
     history_df.to_csv(os.path.join(OUTPUT_DIR, "training_history.csv"), index_label="epoch")
+
+    try:
+        _gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                              capture_output=True, text=True, timeout=10).stdout.strip()
+    except Exception:
+        _gpu = "unknown"
+    _rewards = [float(h["reward"]) for h in history] if history else []
+    specs = {
+        "train_minutes": round((time.perf_counter() - _train_t0) / 60.0, 2),
+        "epochs_run": len(history),
+        "best_reward_epoch": int(np.argmax(_rewards)) + 1 if _rewards else -1,
+        "best_reward": max(_rewards) if _rewards else None,
+        "gpu": _gpu,
+        "platform": platform.platform(),
+        "tensorflow": tf.__version__,
+        "lambda_trace": os.path.basename(LAMBDA_TRACE_PATH),
+        "args": {k: (v if isinstance(v, (int, float, str, bool, type(None))) else str(v))
+                 for k, v in vars(args).items()},
+    }
+    with open(os.path.join(OUTPUT_DIR, "specs.json"), "w") as _f:
+        json.dump(specs, _f, indent=2)
+    print(f"Training time: {specs['train_minutes']:.1f} min | best-reward epoch: {specs['best_reward_epoch']} | GPU: {_gpu}")
     print(f"All outputs saved in: {OUTPUT_DIR}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a 3D U-Net with RL-based hyperparameter tuning.")
-    
-    # --- I/O Arguments ---
     parser.add_argument("--tiff_path", type=str, required=True, help="Path to the input (multi-page) TIFF file.")
     parser.add_argument("--spots_csv_path", type=str, required=True, help="Path to the TrackMate spots CSV file.")
     parser.add_argument("--base_output_path", type=str, required=True, help="Base directory to save all training runs.")
-    
-    # --- CSV Column Names ---
     parser.add_argument("--csv_frame_col", type=str, default="FRAME", help="Column name for frame index in CSV.")
     parser.add_argument("--csv_x_col", type=str, default="POSITION_X", help="Column name for spot X coordinate.")
     parser.add_argument("--csv_y_col", type=str, default="POSITION_Y", help="Column name for spot Y coordinate.")
     parser.add_argument("--csv_snr_col", type=str, default="SNR_CH1", help="Column name for spot SNR.")
     parser.add_argument("--csv_quality_col", type=str, default="QUALITY", help="Column name for spot Quality.")
-    
-    # --- Data & Model Parameters ---
     parser.add_argument("--sequence_length", type=int, default=5, help="Number of frames in each sequence (must be odd).")
     parser.add_argument("--img_height", type=int, default=256, help="Image height (must match data).")
     parser.add_argument("--img_width", type=int, default=256, help="Image width (must match data).")
     parser.add_argument("--channels", type=int, default=1, help="Number of channels (default 1).")
     parser.add_argument("--train_split", type=float, default=0.8, help="Fraction of data for training.")
     parser.add_argument("--val_split", type=float, default=0.2, help="Fraction of data for validation.")
-    
-    # --- Training Hyperparameters ---
     parser.add_argument("--total_epochs", type=int, default=100, help="Total number of epochs to run *after* warmup.")
     parser.add_argument("--steps_per_epoch", type=int, default=100, help="Number of training steps per epoch.")
     parser.add_argument("--unet_batch_size", type=int, default=4, help="Batch size for the U-Net.")
@@ -681,33 +783,36 @@ if __name__ == "__main__":
     parser.add_argument("--action_noise_stddev_fraction", type=float, default=0.05, help="Std dev of action noise as a fraction of action range.")
     parser.add_argument("--lambda_geo_bounds", type=float, nargs=2, default=[0.01, 0.5], help="Min and max bounds for the lambda_geo action.")
     parser.add_argument("--agent_updates_per_step", type=int, default=2, help="Number of DDPG agent updates per step.")
-    
-    # --- RL State & Reward ---
     parser.add_argument("--state_dim", type=int, default=5, help="Dimension of the RL state vector.")
     parser.add_argument("--action_dim", type=int, default=1, help="Dimension of the RL action vector (lambda_geo).")
     parser.add_argument("--signal_radius", type=int, default=2, help="Radius of circle for spot signal (SNR reward).")
     parser.add_argument("--bg_inner_radius", type=int, default=4, help="Inner radius of background ring (SNR reward).")
     parser.add_argument("--bg_outer_radius", type=int, default=6, help="Outer radius of background ring (SNR reward).")
 
-    # --- Noise Model ---
     parser.add_argument("--noise_decay", type=float, default=0.999, help="Factor to decay action noise by each epoch.")
-    
-    # --- Training Control ---
+    parser.add_argument("--background_level", type=float, default=None,
+                        help="Override the estimated background level (ADU). If omitted, estimated from data.")
+    parser.add_argument("--gaussian_variance", type=float, default=None,
+                        help="Override the estimated read-noise variance (sigma_sq). If omitted, estimated from data.")
+    parser.add_argument("--gain_estimate", type=float, default=None,
+                        help="Override the estimated gain (ADU/photon). If omitted, estimated from data via the "
+                             "photon-transfer slope. Pass this to put the RL and static-lambda pipelines on the "
+                             "SAME Poisson-Gaussian NLL.")
+    parser.add_argument("--reward_mode", type=str, default="delta", choices=["delta", "absolute"],
+                        help="DDPG reward signal. 'delta' = R(post-update) - R(pre-update) on the same batch, "
+                             "isolating the effect of lambda from batch difficulty; 'absolute' = R(post-update) only. "
+                             "Checkpoint selection and early stopping always use the ABSOLUTE post-update reward.")
     parser.add_argument("--rl_warmup_epochs", type=int, default=5, help="Number of epochs to run with random actions to fill buffer.")
     parser.add_argument("--early_stopping_patience", type=int, default=15, help="Patience (epochs) for Early Stopping.")
     parser.add_argument("--lr_scheduler_patience", type=int, default=7, help="Patience (epochs) for ReduceLROnPlateau.")
     parser.add_argument("--lr_scheduler_factor", type=float, default=0.5, help="Factor to reduce LR by.")
     parser.add_argument("--min_lr", type=float, default=1e-6, help="Minimum learning rate.")
-    
-    # --- Other ---
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
 
     args = parser.parse_args()
 
-    # --- Post-process args to reconstruct nested dictionaries ---
     args.data_split = {"train": args.train_split, "val": args.val_split}
-    
-    # This is the active reward config used by calculate_composite_reward
+
     args.rl_reward_config = {
         'fit_region_size': 9,
         'bg_annulus_inner_radius': args.bg_inner_radius,
@@ -723,20 +828,17 @@ if __name__ == "__main__":
         },
         'erased_spot_penalty': -1.5
     }
-    
-    # Hard-coded noise regions
+
     args.noise_analysis_regions = [
         (0, 190, 50, 250), (200, 190, 250, 250),
         (0, 10, 40, 50), (220, 10, 250, 50)
     ]
 
-    # --- Validate arguments ---
     if args.sequence_length % 2 == 0:
         parser.error("--sequence_length must be an odd number (e.g., 3, 5).")
     if args.train_split + args.val_split > 1.0:
         parser.error("--train_split and --val_split must sum to 1.0 or less.")
-    
-    # --- Create output directory ---
+
     Path(args.base_output_path).mkdir(parents=True, exist_ok=True)
 
     main(args)
