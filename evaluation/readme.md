@@ -41,7 +41,7 @@ The script works by grouping your videos by noise level (e.g., `scale_1.0`, `sca
 
 1.  **Frame Sampling:** Randomly samples a subset of frames (e.g., 100) to speed up analysis. The *same* frames are used for all videos in a group for a fair comparison.
 2.  **Blob Detection:** Uses a Laplacian of Gaussian (LoG) detector (`skimage.feature.blob_log`) to find spots in every sampled frame.
-3.  **Threshold Scan:** Repeats the detection across a wide range of sensitivity thresholds.
+3.  **Threshold Scan:** Repeats the detection across a range of sensitivity thresholds.
 4.  **Performance Matching:** Compares the detections at each threshold against the known ground truth spot list (`..._spot_info.csv`) to classify every detection as a **True Positive (TP)**, **False Positive (FP)**, or **False Negative (FN)**.
 5.  **Metric Calculation:** Calculates **Precision**, **Recall**, and **F1-Score** for each method at each threshold.
 6.  **Plotting:** Generates two key summary plots for each noise group:
@@ -53,7 +53,7 @@ The script works by grouping your videos by noise level (e.g., `scale_1.0`, `sca
 Run this script on the output directory from Step 2.
 
 ```bash
-python evaluate_detections.py \
+python evaluate_detection_threshold_scan.py \
     --gt_spots_csv "synthetic_gt_scaled_0.1_spot_info.csv" \
     --input_dir "Simulations_Output_Paper/Gauss_Poisson_Est_Paper" \
     --output_dir "Evaluation_Results" \
@@ -71,7 +71,7 @@ This script will create a new sub-directory in your output_dir for each noise le
 * `precision_recall_curve_comparison.png`: The summary PR curve plot, ideal for publication.
 * `metrics_vs_threshold_comparison.png`: The plot of metrics vs. detector threshold.
 
-> Important Note for Customization: The script uses the `get_method_style` function to automatically label and color the plots based on video filenames. If you use this script to evaluate your own denoising methods with different file-naming conventions, you must edit the `ALL_COLORS` dictionary and the `get_method_style` function at the top of `evaluate_detection_threshold_scan.py` to recognize your files.
+> Important Note for Customization: Method labels and colours come from `figures/figure_style.py`, shared by every evaluation and figure script. To evaluate your own methods with different file-naming conventions, add them there. It raises `UnknownMethodError` on a filename it does not recognise.
 
 ---
 
@@ -97,7 +97,7 @@ python plot_auc_summary.py \
 
 This will generate a single image file (AUC_Summary_vs_Noise_Scale.png in this example) showing the summary.
 
-> This script also uses the `get_method_style` function and `ALL_COLORS` dictionary, so you must customize it if you are plotting your own methods with different naming conventions.
+> This script also takes its labels and colours from `figures/figure_style.py` -- see the note above.
 
 ---
 
@@ -105,7 +105,7 @@ This will generate a single image file (AUC_Summary_vs_Noise_Scale.png in this e
 
 The `evaluate_detection_threshold_scan.py` script (Step 3) is excellent for finding the optimal detection threshold for each method.
 
-This script, `evaluate_detection_threshold_scan.py`, automates the entire in-depth analysis. It automatically combines the results from the threshold scan and then uses that information to perform the full, in-depth quantitative analysis described in **Section 2.4.1**.
+This script, `evaluate_full.py`, automates the entire in-depth analysis. It automatically combines the results from the threshold scan and then uses that information to perform the full, in-depth quantitative analysis described in **Section 2.4.1**.
 
 ### Overview
 
@@ -122,12 +122,12 @@ This script performs two major operations:
         * **Localization:** RMSE and Median Absolute Error (pixels).
         * **Photometry:** R-squared, Gain, and Median Absolute Error (ADU).
 
-Then, it saves a master `evaluation_summary_all_methods.csv` file and generates summary plots for each of these key metrics vs. noise scale, giving you all the main figures for the paper.
+Then, it saves a master `evaluation_summary_all_methods.csv` file and generates summary plots for each of these key metrics vs. noise scale.
 
 ### Usage Example
 
 ```bash
-python evaluate_comprehensive.py \
+python evaluate_full.py \
     --gt_video "Cy3_Best/synthetic_gt_scaled_0.1.tif" \
     --gt_spots_csv "Cy3_Best/synthetic_gt_scaled_0.1_spot_info.csv" \
     --input_dir "Cy3_Best/Simulations_Output_Paper/Gauss_Poisson_Est_Paper" \
@@ -138,8 +138,10 @@ python evaluate_comprehensive.py \
     --opt_metric "F1"
 ```
 
+Passing `--noise_params_csv` (the CSV written by `estimate_noise_params.py`) additionally enables
+the noise-aware maximum-likelihood localization arms; without it, fitting is least-squares only.
+
 ### Outputs
-This script generates the main quantitative results for your paper in the specified --output_dir:
 
 * combined_threshold_scan_results.csv: The intermediate, combined CSV.
 * evaluation_summary_all_methods.csv: The final, master CSV with all metrics (PSNR, F1, Loc_Error, etc.).
@@ -155,13 +157,13 @@ This script generates the main quantitative results for your paper in the specif
 
 # Evaluation on Experimental Data
 
-This repository also includes the script `evaluate_experimental.py` to reproduce the quantitative analysis on real-world experimental data described in **Section 2.4.2** of the paper.
+This repository also includes the script `evaluate_experimental.py` to reproduce the quantitative analysis on experimental data described in **Section 2.4.2** of the paper.
 
 This script does not use a ground truth. Instead, it uses spot detections from the original noisy video (from TrackMate) as a reference to compare the quantitative properties of the noisy vs. denoised spots.
 
 ### Overview
 
-This single, integrated script performs the entire experimental analysis and plotting pipeline.
+This single, integrated script performs the entire experimental analysis pipeline.
 
 1.  **Finds Experiments:** It scans a base directory for experiment subfolders. Each subfolder is expected to contain:
     * A noisy video (e.g., `Experiment_A.tif`)
@@ -202,7 +204,6 @@ python evaluate_experimental.py \
     --output_dir_name "Experimental_Results" \
     --methods "N2V" "DeepCAD-RT" "λ = RL" "λ = 0.1 (T=1)" \
     --adaptive_radii \
-    --spots_to_process 10000 \
     --exclude_training_data \
     --save_visuals
 ```
@@ -220,4 +221,4 @@ This script will create a new folder (e.g., Experimental_Results) inside your --
 * Visualizations (Optional): If --save_visuals is used, it will create a visualizations subfolder with debug images of the background annulus and Gaussian fits for a few spots.
 
 > Important Note for Customization: 
-> The script uses the METHOD_MAP dictionary at the top of evaluate_experimental.py to map filenames to display names (e.g., geo0.1 -> λ = 0.1 (T=1)). If you use this script to evaluate your own denoising methods with different file-naming conventions, you must edit this dictionary to recognize your files.
+> The script maps filenames to display names with `resolve_label` from `figures/figure_style.py` (e.g. `geo0.1` -> `λ = 0.1 (T=1)`). To evaluate your own methods with different file-naming conventions, add them there.
