@@ -448,8 +448,10 @@ def main(args):
         'gaussian_variance': gaussian_variance,
         'gain_estimate': gain_estimate
     }
-    np.save(run_dir / "noise_parameters.npy", noise_params)
-    print(f"Saved noise parameters to {args.output_noise_params}")
+    
+    noise_params_path = Path(args.output_noise_params) if args.output_noise_params else run_dir / "noise_parameters.npy"
+    np.save(noise_params_path, noise_params)
+    print(f"Saved noise parameters to {noise_params_path}")
 
     train_frames, val_frames, test_frames = sequential_split(
         all_frames, train_ratio=args.train_ratio, val_ratio=args.val_ratio
@@ -529,7 +531,7 @@ def main(args):
     )
 
     np.save(args.output_history, history.history)
-    print(f"Training complete. Best model saved to {args.output_model}")
+    print(f"Training complete. Best model saved to {run_dir / 'best_model.keras'}")
     print(f"Training history saved to {args.output_history}")
 
 
@@ -560,8 +562,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output_noise_params",
         type=str,
-        default="noise_parameters.npy",
-        help="Path to save the estimated noise parameters (.npy file)."
+        default=None,
+        help="Path to save the estimated noise parameters (.npy file). Defaults to noise_parameters.npy inside the run folder"
     )
 
     # --- Data & Model Arguments ---
@@ -669,6 +671,7 @@ if __name__ == "__main__":
 
     Path(args.output_model).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output_history).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.output_noise_params).parent.mkdir(parents=True, exist_ok=True)
+    if args.output_noise_params:
+        Path(args.output_noise_params).parent.mkdir(parents=True, exist_ok=True)
 
     main(args)
