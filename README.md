@@ -82,7 +82,7 @@ The core of our method is a composite loss function that balances denoising and 
 ## Inference (Using a Pre-trained Model)
 
 This is the fastest way to denoise your own data. You will first need to download our pre-trained
-models and associated files from the archived record: `<MODEL_DOWNLOAD_LINK>`.
+models and associated files from the archived record: `10.5281/zenodo.21925651`.
 
 The archive contains the four static-λ models, the automatically tuned (RL) model, and the
 configuration files each pipeline needs. To verify a working installation before using your own data,
