@@ -5,7 +5,6 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras import layers, Model
 from tensorflow.keras.utils import register_keras_serializable
-from collections import deque
 import tifffile
 import argparse
 from pathlib import Path
@@ -174,7 +173,9 @@ def evaluate_video(input_tiff_path, training_run_folder, output_path):
     num_frames, height, width = denoised_video_final.shape
     imagej_hyperstack = denoised_video_final.reshape(num_frames, 1, 1, height, width)
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
 
     tifffile.imwrite(
         output_path,
@@ -183,7 +184,7 @@ def evaluate_video(input_tiff_path, training_run_folder, output_path):
         metadata={'axes': 'TZCYX'} 
     )
 
-    print(f"\n✅ Denoised video successfully saved to: {output_path}")
+    print(f"\nDenoised video saved to: {output_path}")
 
 def main(args):
     input_path = Path(args.input_file)
@@ -206,7 +207,8 @@ def main(args):
     try:
         evaluate_video(str(input_path), str(model_folder_path), args.output_file)
     except Exception as e:
-        print(f"\n❌ An error occurred: {e}")
+        print(f"\nERROR: {e}")
+        sys.exit(1)
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
