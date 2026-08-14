@@ -20,8 +20,6 @@ This framework is presented in two distinct approaches:
 - [Training (RL-controlled λ)](#training-rl-controlled-λ)
 - [Repository layout](#repository-layout)
 - [Which models are included](#which-models-are-included)
-- [Evaluation](#evaluation)
-- [Figures](#figures)
 - [Troubleshooting & FAQ](#troubleshooting--faq)
 
 ---
