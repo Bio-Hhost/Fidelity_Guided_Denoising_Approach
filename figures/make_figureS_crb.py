@@ -212,7 +212,7 @@ def main():
     print(f"wrote {os.path.relpath(OUTPDF, ROOT)} and .png")
 
     T.to_csv(OUTTAB)
-    X.drop(columns=["sha256"]).to_csv(OUTTAB.replace(".csv", "_experimental.csv"), index=False)
+    X.to_csv(OUTTAB.replace(".csv", "_experimental.csv"), index=False)
 
     print(T[["crb_px", "raw_LSE", "RL_LSE", "delta_LSE", "raw_MLE", "RL_MLE", "delta_MLE",
              "ratio_raw_MLE_over_CRB"]].round(4).to_string())
