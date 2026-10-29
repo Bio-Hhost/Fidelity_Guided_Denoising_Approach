@@ -6,7 +6,7 @@ This framework is presented in two distinct approaches:
 1.  **Static $\lambda$:** A 3D U-Net trained with a manually-tuned, static fidelity weight ($\lambda$).
 2.  **Automatically tuned (RL) $\lambda$:** A 3D U-Net trained jointly with a reinforcement learning (RL) agent that selects $\lambda$ from the data during training, removing the manual hyperparameter search. The learned policy converges to a single global value rather than varying per batch — see [Training (RL-controlled λ)](#training-rl-controlled-λ).
 
-[![Paper](https://img.shields.io/badge/paper-link-b31b1b.svg)](https://[link.to.paper](https://www.cell.com/biophysj/fulltext/S0006-3495(26)00729-0))
+[![Paper](https://img.shields.io/badge/paper-link-b31b1b.svg)](https://www.cell.com/biophysj/fulltext/S0006-3495(26)00729-0)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
